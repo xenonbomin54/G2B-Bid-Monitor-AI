@@ -138,6 +138,9 @@ class ApiRunner:
         self.limiter = RateLimiter(int(rpm or os.environ.get("PPS_API_RPM", 40)))
         self.max_workers = max_workers
         self.use_response_format = use_response_format
+        # 엔드포인트마다 지원 필드가 다르다. 400 을 받으면 하나씩 끄고 재시도한다.
+        # (NIM 은 chat_template_kwargs 를 받고, TurboFieldfare 로컬 서버는 거부한다.)
+        self.use_template_kwargs = True
         self.cache_dir = os.environ.get("PPS_API_CACHE", ".cache/api")
         self.cache_hits = 0
         self.cache_misses = 0
@@ -215,10 +218,11 @@ class ApiRunner:
             "temperature": cfg.temperature,
             "max_tokens": cfg.max_tokens,
             "stream": False,
+        }
+        if self.use_template_kwargs:
             # Gemma 4 계열은 사고 모드를 켤 수 있다. 여기서는 끈다 —
             # 평가 서버는 JSON Schema 로 출력이 고정되어 사고 흔적을 낼 자리가 없다.
-            "chat_template_kwargs": {"enable_thinking": False},
-        }
+            body["chat_template_kwargs"] = {"enable_thinking": False}
         if cfg.temperature > 0:
             body["top_p"] = 0.95
         if cfg.schema is not None and self.use_response_format:
@@ -249,7 +253,10 @@ class ApiRunner:
             if e.code in (408, 409, 429, 500, 502, 503, 504) and attempt < 5:
                 time.sleep(min(60, (2 ** attempt) + random.random()))
                 return self._one(messages, cfg, attempt + 1)
-            # json_schema 미지원이면 한 번만 끄고 재시도
+            # 지원하지 않는 필드는 하나씩 끄고 재시도한다 (엔드포인트마다 다르다)
+            if e.code == 400 and "chat_template_kwargs" in detail and self.use_template_kwargs:
+                self.use_template_kwargs = False
+                return self._one(messages, cfg, attempt)
             if e.code == 400 and self.use_response_format and cfg.schema is not None:
                 self.use_response_format = False
                 return self._one(messages, cfg, attempt)
