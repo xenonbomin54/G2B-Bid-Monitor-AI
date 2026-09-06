@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+open/
+open.zip
+output/
+.venv/
+apiapiapi.py
+.env
+build/
+submit.zip

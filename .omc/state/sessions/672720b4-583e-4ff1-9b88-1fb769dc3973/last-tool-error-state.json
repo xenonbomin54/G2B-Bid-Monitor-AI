@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"ps -o pid,etime -p $(pgrep -f \\\"evaluate.py\\\" | head -1) 2>/dev/null || echo \\\"=== 종료됨 ===\\\"; s=$(wc -c < /private/tmp/claude-501/-Users-xenonbomin54-----/672720b4-583e-4ff1-9b88-1fb769dc3...",
+  "error": "Exit code 1\n  PID ELAPSED\n80549   09:03\n출력        0바이트",
+  "timestamp": "2026-09-06T00:21:21.187Z",
+  "retry_count": 1
+}

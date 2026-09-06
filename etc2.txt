@@ -1,0 +1,566 @@
+[Baseline] Gemma 제약 디코딩 법령위반 판정
+
+나라장터 자체입찰 공고 법령 위반사항 모니터링 AI 경진대회 — 베이스라인
+입찰공고 1건의 공고문과 첨부 문서를 읽고 24개 항목의 위반 여부와 근거 문구를 출력하는 기본 예시입니다. 고정 LLM(google/gemma-4-26B-A4B-it)의 구조화 출력을 사용하고, 근거 문구를 검증한 뒤 submission.csv로 저장합니다.
+
+이 노트북의 코드는 배포 폴더의 baseline/script.py와 동일한 로직을 셀 단위로 나눈 것입니다. 평가 서버에서는 script.py가 그대로 실행됩니다.
+
+제출 규약 요약
+구분	내용
+제출물	submit.zip = script.py · requirements.txt · model/(선택, 정적 자산만 허용)
+실행	평가 서버가 독립 컨테이너에서 pip install -r requirements.txt → python script.py
+입력	./data/test.jsonl.gz(읽기 전용) + ./data/항목표.json · 정답스키마_디코딩.json · 법령패키지
+출력	./output/submission.csv — 열 id, v1..v24, e1..e24 (v = 0/1, e = 근거 문구·비위반은 빈칸)
+모델	평가 서버 PPS_MODEL_DIR 경로의 가중치를 vLLM offline API로 인프로세스 로드 · 베이스라인은 int8 weight-only로 로드(양자화 방식은 참가자가 선택)
+채점	리더보드 = 위반 여부 Macro F1 · 근거 문구(e열)는 2차 정성평가 자료
+로컬 실행
+모델 경로는 PPS_MODEL_DIR 환경변수로 지정합니다.
+모델 없이 입력·출력 형식만 확인하려면 아래에서 USE_MOCK = True로 설정합니다.
+평가 서버와 다른 모델 또는 실행환경을 사용하면 출력이 달라질 수 있습니다.
+1. 환경 확인 (Environment Check)
+
+import sys, platform
+print("python", sys.version.split()[0], platform.platform())
+try:
+    import torch
+    print("torch", torch.__version__, "cuda", torch.version.cuda, "gpu", torch.cuda.is_available() and torch.cuda.get_device_name(0))
+except ImportError:
+    print("torch 없음 — USE_MOCK=True 로만 실행 가능")
+try:
+    import vllm
+    print("vllm", vllm.__version__)
+except ImportError:
+    print("vllm 없음 — USE_MOCK=True 로만 실행 가능")
+2. 경로·상수 설정 (Settings)
+평가 서버는 환경변수 PPS_DATA_DIR·PPS_OUTPUT_DIR·PPS_MODEL_DIR를 넣어 줍니다. 로컬에서는 아래 셀에서 맞춰 주세요.
+
+
+import os
+USE_MOCK = True          # 모델 없이 흐름만 볼 때 True. GPU + vllm 환경에서 False.
+LIMIT = None             # 앞 N건만 돌려볼 때 숫자
+
+os.environ.setdefault("PPS_DATA_DIR", "./data")                       # test.jsonl.gz · 항목표.json · 정답스키마_디코딩.json
+os.environ.setdefault("PPS_OUTPUT_DIR", "./output")
+os.environ.setdefault("PPS_MODEL_DIR", "/opt/models/gemma-4-26B-A4B-it")   # 로컬: "google/gemma-4-26B-A4B-it" (HF 다운로드)
+
+import argparse
+import csv
+import gzip
+import io
+import json
+import os
+import re
+import sys
+import time
+import unicodedata
+from collections import Counter
+from typing import Any, Dict, Iterator, List, Optional, Tuple
+
+DATA_DIR = os.environ.get("PPS_DATA_DIR", "./data")
+OUTPUT_DIR = os.environ.get("PPS_OUTPUT_DIR", "./output")
+MODEL_DIR = os.environ.get("PPS_MODEL_DIR", "/opt/models/gemma-4-26B-A4B-it")
+
+ITEMS = [f"v{i}" for i in range(1, 25)]
+EVID = [f"e{i}" for i in range(1, 25)]
+COLUMNS = ["id"] + ITEMS + EVID
+ABSENCE = ["v10", "v11", "v16", "v18", "v20"]          # 부재탐지 항목: 근거 문구 빈칸
+
+DOC_ORDER = ["공고문", "규격서", "과업지시서", "제안요청서", "예외공표서", "기타"]
+META_FIELDS = [
+    "적용계약법", "업무구분", "계약방법", "낙찰방법", "낙찰하한율",
+    "배정예산금액", "입찰추정가격", "소관구분", "공동도급구성방식", "정보화사업여부",
+    "세부품명번호목록", "제한지역코드목록", "지역제한여부", "면허업종제한목록", "업종제한여부",
+    "조항호내용", "공고게시일자", "개찰예정일자", "긴급공고여부", "입찰방법", "조달방식",
+]
+
+SEED = 20260826
+MAX_MODEL_LEN = 16384                   # 베이스라인 모델 컨텍스트 길이
+MAX_TOKENS = 1536                       # 구조화 출력 토큰 예산
+PROMPT_BUDGET = MAX_MODEL_LEN - MAX_TOKENS
+EVIDENCE_MAX = 500                      # 근거 문구 셀 글자 수 상한
+QUANT = "int8_per_channel_weight_only"  # 베이스라인 양자화 설정 · 변경 가능
+
+
+def log(msg: str) -> None:
+    print(f"[baseline] {msg}", file=sys.stderr, flush=True)
+3. 데이터 불러오기 (Data Load)
+레코드 1건 = {"id", "docs": [{"doc_id","type","text"}, ...], "meta": {...}, "dropped_doc_counts": {...}}. docs에 공고문은 반드시 1개 이상, 규격서·과업지시서·제안요청서 등은 공고마다 다릅니다. 길이 예산으로 빠진 첨부는 dropped_doc_counts에 종류·개수만 남습니다. 한글은 NFC로 맞춰 읽습니다 — 근거문구를 원문과 대조할 때 NFD가 섞이면 in 검사가 조용히 실패합니다.
+
+
+def _open(path: str):
+    if str(path).endswith(".gz"):
+        return gzip.open(path, "rt", encoding="utf-8")
+    return io.open(path, "r", encoding="utf-8")
+
+
+def validate_record(rec: Any) -> None:
+    """레코드 1건의 최소 스키마 검사 (id · docs(공고문 1개 이상) · meta)"""
+    if not isinstance(rec, dict):
+        raise ValueError(f"레코드가 object가 아니다: {type(rec).__name__}")
+    for k in ("id", "docs", "meta"):
+        if k not in rec:
+            raise ValueError(f"필수 키 없음: {k}")
+    if not isinstance(rec["id"], str) or not rec["id"]:
+        raise ValueError("id가 비어 있다")
+    docs = rec["docs"]
+    if not isinstance(docs, list) or not docs:
+        raise ValueError(f"docs가 비어 있다 (id={rec['id']})")
+    for d in docs:
+        if not isinstance(d, dict) or not all(k in d for k in ("doc_id", "type", "text")):
+            raise ValueError(f"docs 원소 형식 오류 (id={rec['id']})")
+        if not isinstance(d["text"], str):
+            raise ValueError(f"docs.text가 문자열이 아니다 (id={rec['id']})")
+    if not any(d["type"] == "공고문" for d in docs):
+        raise ValueError(f"공고문이 없다 (id={rec['id']})")
+    if not isinstance(rec["meta"], dict):
+        raise ValueError(f"meta가 object가 아니다 (id={rec['id']})")
+
+
+def normalize(rec: Dict[str, Any]) -> Dict[str, Any]:
+    """NFC 정규화 — macOS에서 만든 파일은 한글이 NFD로 저장될 수 있어 문자열 비교가 어긋날 수 있습니다."""
+    for d in rec.get("docs", []):
+        d["text"] = unicodedata.normalize("NFC", d["text"])
+        if isinstance(d.get("type"), str):
+            d["type"] = unicodedata.normalize("NFC", d["type"])
+    return rec
+
+
+def iter_records(path: str, limit: Optional[int] = None) -> Iterator[Dict[str, Any]]:
+    n = 0
+    with _open(path) as f:
+        for lineno, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"{path}:{lineno} JSON 파싱 실패: {e}") from e
+            validate_record(rec)
+            yield normalize(rec)
+            n += 1
+            if limit and n >= limit:
+                return
+
+
+def full_text(rec: Dict[str, Any]) -> str:
+    """근거문구 대조용 원문 (프롬프트에 넣은 것과 같은 텍스트 · NFC)"""
+    return "\n".join(d["text"] for d in rec["docs"])
+
+
+def build_context(rec: Dict[str, Any], max_chars: int = 60000) -> str:
+    """문서들을 프롬프트용 텍스트 한 덩어리로 잇습니다.
+
+    공고문을 맨 앞에, 나머지는 DOC_ORDER 순서로 배치합니다. `max_chars`를 넘으면 뒤쪽 문서부터
+    통째로 제외하고 꼬리에 '[미수록 문서]'로 표시합니다 — 빠진 사실을 모른 채 "첨부에 없다"로
+    판정하면 부재탐지형 항목이 틀리기 때문입니다. 첫 문서(공고문)는 예산을 넘어도 잘라서 싣습니다.
+    """
+    order = {t: i for i, t in enumerate(DOC_ORDER)}
+    pool = sorted(rec["docs"], key=lambda d: (order.get(d["type"], len(DOC_ORDER)), d["doc_id"]))
+
+    chunks, used, dropped, truncated = [], 0, Counter(), False
+    for i, d in enumerate(pool):
+        head = f"[{d['type']}:{d['doc_id']}]\n"
+        body = d["text"]
+        if used + len(head) + len(body) > max_chars:
+            if i == 0:                                   # 공고문은 예산을 넘어도 잘라서 싣습니다
+                body = body[: max(0, max_chars - len(head))]
+                truncated = True
+            else:
+                dropped[d["type"]] += 1
+                continue
+        chunks.append(head + body)
+        used += len(head) + len(body)
+
+    for t, n in (rec.get("dropped_doc_counts") or {}).items():
+        dropped[t] += n
+
+    text = "\n\n".join(chunks)
+    if truncated:
+        text += "\n\n[절단] 공고문 뒷부분이 길이 예산으로 잘렸다"
+    if dropped:
+        text += "\n\n[미수록 문서] " + ", ".join(f"{t} {n}건" for t, n in sorted(dropped.items()))
+    return text
+
+
+def format_meta(rec: Dict[str, Any]) -> str:
+    """나라장터 메타를 한 줄짜리 목록으로. 값이 없는 필드는 '미기재'로 표시합니다(그 사실도 판정 입력입니다)."""
+    m = rec.get("meta", {})
+    lines = []
+    for k in META_FIELDS:
+        if k in m:
+            v = m[k]
+            lines.append(f"- {k}: {'미기재' if v is None else v}")
+    return "\n".join(lines)
+
+INPUT_PATH = os.path.join(DATA_DIR, "test.jsonl.gz")
+recs = list(iter_records(INPUT_PATH, limit=LIMIT))
+print(f"{len(recs)}건 로드")
+
+doc_types = Counter(d["type"] for r in recs for d in r["docs"])
+chars = sorted(sum(len(d["text"]) for d in r["docs"]) for r in recs)
+print("문서 종류:", dict(doc_types))
+print(f"공고당 글자수 min/median/max = {chars[0]:,} / {chars[len(chars)//2]:,} / {chars[-1]:,}")
+
+r0 = recs[0]
+print("\nid:", r0["id"])
+print("docs:", [(d["doc_id"], d["type"], len(d["text"])) for d in r0["docs"]])
+print("meta:", {k: r0["meta"].get(k) for k in META_FIELDS[:8]})
+print("\n공고문 앞부분:\n", r0["docs"][0]["text"][:600])
+4. 항목표·디코딩 스키마 (Item Table & Schema)
+data/항목표.json에 24항목 이름·부재탐지 여부·비고가, data/정답스키마_디코딩.json에 제약 디코딩용 JSON 스키마가 있습니다(없으면 내장본). 부재탐지 5항목(v10·v11·v16·v18·v20) 은 "있어야 할 문구가 없는 것"이 위반이라 인용할 원문이 없습니다 — 스키마에서 근거문구를 null로 고정합니다.
+
+
+# 항목명·근거조문·비고는 data/항목표.json 에 있습니다. 노트북에 사본을 두지 않습니다.
+def item_table(data_dir: str = DATA_DIR) -> Dict[str, Dict[str, Any]]:
+    p = os.path.join(data_dir, "항목표.json")
+    if not os.path.exists(p):
+        raise FileNotFoundError(f"{p} 가 없습니다 — data/ 를 그대로 둔 채 실행하세요.")
+    return json.load(io.open(p, encoding="utf-8"))["항목"]
+
+
+def decode_schema(data_dir: str = DATA_DIR) -> Dict[str, Any]:
+    """제약 디코딩용 스키마 — 조건부 규칙은 문법이 아니라 후처리에서 검사합니다."""
+    p = os.path.join(data_dir, "정답스키마_디코딩.json")
+    if os.path.exists(p):
+        s = json.load(io.open(p, encoding="utf-8"))
+        return s["properties"]["판정"] if "판정" in s.get("properties", {}) else s
+    props = {}
+    for v in ITEMS:
+        props[v] = {
+            "type": "object", "additionalProperties": False,
+            "required": ["위반여부", "근거문구"],
+            "properties": {
+                "위반여부": {"type": "integer", "enum": [0, 1]},
+                "근거문구": {"type": "null"} if v in ABSENCE else {"type": ["string", "null"]},
+            },
+        }
+    return {"type": "object", "additionalProperties": False, "required": list(ITEMS), "properties": props}
+
+tbl = item_table(DATA_DIR)
+schema = decode_schema(DATA_DIR)
+for v in ITEMS:
+    print(f"{v:>4}  {'[부재탐지]' if tbl[v]['부재탐지'] else '          '}  {tbl[v]['항목명']}")
+print("\n스키마 키:", list(schema["properties"])[:5], "…", "v10 근거문구:", schema["properties"]["v10"]["properties"]["근거문구"])
+5. 프롬프트 구성 (Prompt)
+system = 출력 형식 지시 + 24항목 목록, user = 나라장터 메타 + 문서(공고문 먼저, 첨부 순서대로). 문서가 글자 수 상한을 넘으면 뒤쪽 첨부부터 제외하고 [미수록 문서]로 표시합니다.
+
+
+SYSTEM_HEAD = """당신은 공공 입찰공고의 법령 위반 여부를 점검한다.
+공고문과 첨부 문서, 그리고 나라장터 입력 메타를 함께 읽고 아래 24개 항목 각각에 대해
+위반 여부(1/0)와 근거 문구를 판정한다.
+
+지켜야 할 것
+1. 24개 항목 전부에 답한다. 판단이 어려운 항목도 비워 두지 말고 0으로 낸다.
+2. 근거 문구는 반드시 **주어진 문서에 그대로 있는 문장**을 옮긴다. 요약하거나 고쳐 쓰지 않는다.
+   원문에 없는 문구는 근거로 인정되지 않는다. 500자를 넘기지 않는다.
+3. 아래 '근거 없음' 표시가 붙은 항목은 **있어야 할 문구가 없는 것**이 위반이다.
+   인용할 원문이 존재하지 않으므로 근거 문구를 null로 둔다.
+
+판정할 24개 항목"""
+
+SYSTEM_TAIL = """
+출력은 JSON 하나로만 낸다. 키는 v1~v24, 각 값은 {"위반여부": 0 또는 1, "근거문구": 문자열 또는 null}이다.
+설명이나 머리말을 덧붙이지 않는다."""
+
+
+def build_system_prompt(tbl: Dict[str, Dict[str, Any]]) -> str:
+    lines = []
+    for v in ITEMS:
+        it = tbl[v]
+        tag = "  [근거 없음 — null]" if it["부재탐지"] else ""
+        note = f" ({it['비고']})" if it.get("비고") else ""
+        lines.append(f"- {v}: {it['항목명']}{note}{tag}")
+    return SYSTEM_HEAD + "\n" + "\n".join(lines) + "\n" + SYSTEM_TAIL
+
+
+def build_user_prompt(rec: Dict[str, Any], max_chars: int) -> str:
+    return (
+        f"[공고 ID] {rec['id']}\n\n"
+        f"[나라장터 입력 메타]\n{format_meta(rec)}\n\n"
+        f"[문서]\n{build_context(rec, max_chars=max_chars)}\n"
+    )
+
+
+def build_messages(rec: Dict[str, Any], system_prompt: str, max_chars: int) -> List[Dict[str, str]]:
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": build_user_prompt(rec, max_chars)},
+    ]
+
+system_prompt = build_system_prompt(tbl)
+print(system_prompt)
+print("\n===== user (앞 1,200자) =====")
+print(build_user_prompt(recs[0], max_chars=4000)[:1200])
+6. 모델 로드·배치 추론 (Inference)
+LLM(model=PPS_MODEL_DIR, quantization="int8_per_channel_weight_only", max_model_len=16384, gpu_memory_utilization=0.92, seed=…)
+SamplingParams(temperature=0, max_tokens=1536, seed=…, structured_outputs=StructuredOutputsParams(json=schema)) ← 제약 디코딩
+llm.chat([대화1, 대화2, …], sampling_params) — 여러 대화를 한 번에 넘기면 vLLM이 연속 배칭으로 처리합니다(청크 128건).
+프롬프트 토큰이 예산(16,384 − 1,536 = 14,848)을 넘으면 문서 글자 예산을 줄여 다시 만듭니다.
+청크가 통째로 실패하면 건 단위로 재시도하고, 그래도 실패한 건은 빈 출력(→ 전항목 0)으로 둡니다.
+
+class VLLMRunner:
+    """평가 서버의 모델을 vLLM offline API로 실행합니다."""
+
+    def __init__(self, schema: Dict[str, Any], model_dir: str = MODEL_DIR, quant: Optional[str] = QUANT,
+                 max_tokens: int = MAX_TOKENS, seed: int = SEED, gpu_mem: float = 0.92, tp: int = 1):
+        t0 = time.time()
+        import vllm                                    # --mock 실행 시 vllm이 없어도 되도록 지연 import
+        from vllm import LLM, SamplingParams
+        from vllm.sampling_params import StructuredOutputsParams
+
+        log(f"vllm {vllm.__version__} · 모델 {model_dir} · quant={quant} · max_model_len={MAX_MODEL_LEN}")
+        kw = dict(model=model_dir, tokenizer=model_dir, max_model_len=MAX_MODEL_LEN,
+                  gpu_memory_utilization=gpu_mem, seed=seed, tensor_parallel_size=tp, dtype="auto")
+        if quant:
+            kw["quantization"] = quant
+        self.llm = LLM(**kw)
+        self.tok = self.llm.get_tokenizer()
+        self.sp = SamplingParams(
+            temperature=0.0, max_tokens=max_tokens, seed=seed,
+            structured_outputs=StructuredOutputsParams(json=schema, disable_any_whitespace=True),
+        )
+        self.load_seconds = time.time() - t0
+
+    def count_tokens(self, messages: List[Dict[str, str]]) -> int:
+        try:
+            ids = self.tok.apply_chat_template(messages, add_generation_prompt=True, tokenize=True)
+            if hasattr(ids, "keys") and "input_ids" in ids:   # transformers 버전에 따라 dict가 반환되는 경우
+                ids = ids["input_ids"]
+            return len(ids)
+        except Exception:
+            return len(self.tok.encode("\n".join(m["content"] for m in messages)))
+
+    def chat(self, batch: List[List[Dict[str, str]]]) -> List[str]:
+        outs = self.llm.chat(batch, sampling_params=self.sp, use_tqdm=False)
+        return [o.outputs[0].text if o.outputs else "" for o in outs]
+
+
+class MockRunner:
+    """모델 없이 입력·출력 및 제출 형식을 확인합니다."""
+    load_seconds = 0.0
+
+    def __init__(self, schema: Dict[str, Any], **_):
+        pass
+
+    def count_tokens(self, messages: List[Dict[str, str]]) -> int:
+        return sum(len(m["content"]) for m in messages) // 2     # 한국어 약 2자/토큰 가정
+
+    def _one(self, _messages: List[Dict[str, str]]) -> str:
+        out = {v: {"위반여부": 0, "근거문구": None} for v in ITEMS}
+        return json.dumps(out, ensure_ascii=False)
+
+    def chat(self, batch: List[List[Dict[str, str]]]) -> List[str]:
+        return [self._one(m) for m in batch]
+
+
+def fit_to_budget(rec: Dict[str, Any], system_prompt: str, runner, max_chars: int,
+                  budget: int = PROMPT_BUDGET) -> Tuple[List[Dict[str, str]], int, int]:
+    """설정된 토큰 예산에 맞게 문서 글자 수를 조정합니다."""
+    while True:
+        msgs = build_messages(rec, system_prompt, max_chars)
+        n = runner.count_tokens(msgs)
+        if n <= budget or max_chars <= 2000:
+            return msgs, n, max_chars
+        max_chars = int(max_chars * min(0.85, budget / n * 0.95))
+
+
+def run_chunk(runner, batch: List[List[Dict[str, str]]]) -> List[str]:
+    """청크 단위 호출 — 청크가 통째로 실패하면 건 단위로 재시도하고, 그래도 실패한 건은 빈 출력으로 둡니다."""
+    try:
+        return runner.chat(batch)
+    except Exception as e:
+        log(f"  ! 청크({len(batch)}건) 실패 → 건 단위 재시도: {type(e).__name__}: {str(e)[:160]}")
+    outs = []
+    for m in batch:
+        try:
+            outs.append(runner.chat([m])[0])
+        except Exception as e:
+            log(f"  ! 건 단위 실패 → 빈 출력: {type(e).__name__}: {str(e)[:160]}")
+            outs.append("")
+    return outs
+
+runner = MockRunner(schema) if USE_MOCK else VLLMRunner(schema, model_dir=MODEL_DIR, quant=QUANT,
+                                                           max_tokens=MAX_TOKENS, seed=SEED, gpu_mem=0.92, tp=1)
+print(f"모델 로드 {runner.load_seconds:.1f}s")
+
+msgs_all, ntok = [], []
+for rec in recs:
+    m, n, _ = fit_to_budget(rec, system_prompt, runner, max_chars=4000)
+    msgs_all.append(m); ntok.append(n)
+print(f"프롬프트 토큰 중앙값 {sorted(ntok)[len(ntok)//2]:,} · 최대 {max(ntok):,}")
+
+CHUNK = 128
+t0 = time.time(); texts = []
+for s in range(0, len(msgs_all), CHUNK):
+    texts.extend(run_chunk(runner, msgs_all[s:s+CHUNK]))
+    print(f"  {min(s+CHUNK, len(msgs_all))}/{len(msgs_all)}건 … {time.time()-t0:.0f}s")
+print(f"추론 {time.time()-t0:.1f}s · 건당 {(time.time()-t0)/len(recs):.2f}s")
+print("\n첫 건 출력(앞 500자):", texts[0][:500])
+7. 파싱·후처리 (Post-processing)
+모델 출력 JSON → 24항목 dict. 빠진 항목은 0으로 메웁니다(제출 스키마 유지용). 후처리는 부재탐지 항목과 비위반 항목의 근거 문구를 비우고, 근거 문구의 원문 포함 여부·500자 상한·수식 접두를 검증합니다.
+
+
+FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.S)
+
+
+def extract_json(text: str) -> Optional[Any]:
+    text = (text or "").strip()
+    if not text:
+        return None
+    for cand in (text, *(m.group(1) for m in FENCE.finditer(text))):
+        try:
+            return json.loads(cand)
+        except json.JSONDecodeError:
+            pass
+    i, j = text.find("{"), text.rfind("}")
+    if i >= 0 and j > i:
+        try:
+            return json.loads(text[i:j + 1])
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def parse_judgment(text: str) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
+    """모델 출력을 24항목 판정으로 정리합니다. 빠진 항목은 0/None으로 채우고 결손 목록을 함께 반환합니다."""
+    obj = extract_json(text)
+    if isinstance(obj, dict) and isinstance(obj.get("판정"), dict):
+        obj = obj["판정"]
+    out, missing = {}, []
+    for v in ITEMS:
+        raw = obj.get(v) if isinstance(obj, dict) else None
+        if not isinstance(raw, dict):
+            missing.append(v)
+            out[v] = {"위반여부": 0, "근거문구": None}
+            continue
+        hit = raw.get("위반여부", raw.get("violation", 0))
+        if isinstance(hit, bool):
+            hit = int(hit)
+        if isinstance(hit, str):
+            hit = 1 if hit.strip() in ("1", "위반", "true", "True") else 0
+        if hit not in (0, 1):
+            hit = 1 if hit else 0
+        ev = raw.get("근거문구", raw.get("evidence"))
+        if ev is not None and not isinstance(ev, str):
+            ev = str(ev)
+        out[v] = {"위반여부": int(hit), "근거문구": ev}
+    return out, missing
+
+
+def clean_evidence(ev: Optional[str], src: str) -> str:
+    """근거문구 셀 규약: NFC · 앞뒤 공백 제거 · 500자 상한 · 수식 접두(=,+,@)면 빈칸 ·
+    원문 부분문자열이 아니면 빈칸(원문에 없는 근거는 채점에서 인정되지 않습니다)."""
+    if not ev:
+        return ""
+    ev = unicodedata.normalize("NFC", ev).replace("\r", "").strip()
+    if not ev or ev[0] in "=+@":
+        return ""
+    ev = ev[:EVIDENCE_MAX]
+    return ev if ev in src else ""
+
+
+def postprocess(judgment: Dict[str, Dict[str, Any]], rec: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """후처리: ① 부재탐지 5항목 근거 빈칸 고정 ② 위반이 아니면 근거 빈칸 ③ 근거문구 원문 대조(NFC)"""
+    src = unicodedata.normalize("NFC", full_text(rec))
+    out = {}
+    for v in ITEMS:
+        cell = dict(judgment.get(v, {"위반여부": 0, "근거문구": None}))
+        hit = 1 if cell.get("위반여부") == 1 else 0
+        ev = "" if (hit == 0 or v in ABSENCE) else clean_evidence(cell.get("근거문구"), src)
+        out[v] = {"위반여부": hit, "근거문구": ev}
+    return out
+
+
+def to_row(rec_id: str, judgment: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    row = {"id": rec_id}
+    for i, v in enumerate(ITEMS, 1):
+        row[v] = judgment[v]["위반여부"]
+        row[f"e{i}"] = judgment[v]["근거문구"]
+    return row
+
+
+def empty_row(rec_id: str) -> Dict[str, Any]:
+    return to_row(rec_id, {v: {"위반여부": 0, "근거문구": ""} for v in ITEMS})
+
+rows, invalid, dropped = [], 0, 0
+for rec, text in zip(recs, texts):
+    parsed, missing = parse_judgment(text)
+    invalid += int(len(missing) == 24)
+    before = sum(1 for v in ITEMS if parsed[v]["근거문구"] and parsed[v]["위반여부"] == 1 and v not in ABSENCE)
+    final = postprocess(parsed, rec)
+    dropped += before - sum(1 for v in ITEMS if final[v]["근거문구"])
+    rows.append(to_row(rec["id"], final))
+print(f"행 {len(rows)} · JSON 아닌 출력 {invalid}건 · 원문 불일치로 버린 근거 {dropped}개")
+print(rows[0])
+8. 제출 파일 생성·자가검증 (Submission)
+UTF-8(BOM 없음) · RFC4180 quoting(csv 모듈 기본) · NFC. 저장 후 열 49 · 행 수 = 입력 건수 · id 유일 · v 0/1 · e 500자 이하 · 부재탐지 e 빈칸을 확인합니다.
+
+
+def write_csv(rows: List[Dict[str, Any]], path: str) -> None:
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with io.open(path, "w", encoding="utf-8", newline="") as f:   # UTF-8(BOM 없음) · RFC4180 quoting
+        w = csv.DictWriter(f, fieldnames=COLUMNS, lineterminator="\n")
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: unicodedata.normalize("NFC", str(r[k])) for k in COLUMNS})
+
+
+def validate_csv(path: str, expected_ids: List[str]) -> List[str]:
+    """자가검증: 열 49 · 행 수 = 입력 건수 · id 유일·일치 · v 0/1 · e 500자 이하 · 부재탐지 e 빈칸"""
+    errs: List[str] = []
+    with io.open(path, "r", encoding="utf-8", newline="") as f:
+        rd = csv.reader(f)
+        header = next(rd, None)
+        rows = list(rd)
+    if header != COLUMNS:
+        errs.append(f"헤더 불일치: {len(header or [])}열 (기대 {len(COLUMNS)})")
+        return errs
+    if len(rows) != len(expected_ids):
+        errs.append(f"행 수 {len(rows)} ≠ 입력 {len(expected_ids)}")
+    ids = [r[0] for r in rows]
+    if len(set(ids)) != len(ids):
+        errs.append("id 중복")
+    if set(ids) != set(expected_ids):
+        errs.append(f"id 집합 불일치 (누락 {len(set(expected_ids) - set(ids))})")
+    absence_idx = {COLUMNS.index("e" + v[1:]) for v in ABSENCE}
+    for r in rows:
+        if len(r) != len(COLUMNS):
+            errs.append(f"{r[0]}: 열 수 {len(r)}")
+            continue
+        if any(x not in ("0", "1") for x in r[1:25]):
+            errs.append(f"{r[0]}: 위반여부에 0/1 아닌 값")
+        if any(len(x) > EVIDENCE_MAX for x in r[25:]):
+            errs.append(f"{r[0]}: 근거문구 {EVIDENCE_MAX}자 초과")
+        if any(r[j] for j in absence_idx):
+            errs.append(f"{r[0]}: 부재탐지 항목에 근거문구")
+        if any(x.startswith(("=", "+", "@")) for x in r[25:]):
+            errs.append(f"{r[0]}: 수식 접두 근거문구")
+    return errs
+
+OUT_PATH = os.path.join(OUTPUT_DIR, "submission.csv")
+write_csv(rows, OUT_PATH)
+errs = validate_csv(OUT_PATH, [r["id"] for r in recs])
+print("자가검증:", "PASS" if not errs else errs)
+
+import pandas as pd
+sub = pd.read_csv(OUT_PATH, dtype=str, keep_default_na=False)
+print(sub.shape)
+sub.head(3)
+9. submit.zip 만들기 (Code Submission)
+script.py·requirements.txt·model/이 zip 루트에 오도록 묶습니다(최상위 폴더 금지). requirements.txt는 이미지 기본 패키지 외에 필요한 것만 적습니다(vllm·torch·transformers는 덮어쓸 수 없음). model/에는 LLM 가중치·어댑터를 넣을 수 없습니다.
+
+
+import zipfile
+BASE = "baseline"                       # script.py · requirements.txt · model/ 이 있는 폴더
+with zipfile.ZipFile("submit.zip", "w", zipfile.ZIP_DEFLATED) as z:
+    z.write(os.path.join(BASE, "script.py"), "script.py")
+    z.write(os.path.join(BASE, "requirements.txt"), "requirements.txt")
+    for root, _, files in os.walk(os.path.join(BASE, "model")):
+        for fn in files:
+            if fn == ".DS_Store":
+                continue
+            p = os.path.join(root, fn)
+            z.write(p, os.path.relpath(p, BASE))
+print(zipfile.ZipFile("submit.zip").namelist())
+베이스라인 안내는 여기까지입니다. 제출 전 입력·출력 경로와 CSV 자가검증 결과를 확인하십시오.
