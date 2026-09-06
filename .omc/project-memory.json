@@ -105,9 +105,15 @@
   },
   "hotPaths": [
     {
+      "path": "pps/gating.py",
+      "accessCount": 5,
+      "lastAccessed": 1788705990959,
+      "type": "file"
+    },
+    {
       "path": "STATUS.md",
-      "accessCount": 3,
-      "lastAccessed": 1788702239728,
+      "accessCount": 4,
+      "lastAccessed": 1788707298272,
       "type": "file"
     },
     {
