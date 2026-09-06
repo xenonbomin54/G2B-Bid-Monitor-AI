@@ -46,6 +46,7 @@ class MockRunner:
 
     name = "mock"
     load_seconds = 0.0
+    per_request_schema = True     # 요청마다 다른 스키마 허용 → 파이프라인이 한 풀로 병렬 실행
 
     def __init__(self, items: Sequence[str] = (), **_: Any):
         self.items = list(items) or [f"v{i}" for i in range(1, 25)]
@@ -56,6 +57,17 @@ class MockRunner:
     def generate(self, batch: List[Messages], cfg: GenConfig) -> List[str]:
         payload = {v: {"위반여부": 0, "근거문구": None} for v in self.items}
         return [json.dumps(payload, ensure_ascii=False) for _ in batch]
+
+    def generate_mixed(self, batch: List[Messages], cfgs: List[GenConfig],
+                       on_done=None) -> List[str]:
+        out = []
+        for i, cfg in enumerate(cfgs):
+            items = list((cfg.schema or {}).get("required") or self.items)
+            out.append(json.dumps({v: {"위반여부": 0, "근거문구": None} for v in items},
+                                  ensure_ascii=False))
+            if on_done:
+                on_done(i)
+        return out
 
 
 # ===== BEGIN DEV ONLY =====================================================
@@ -102,6 +114,13 @@ class ApiRunner:
 
     name = "api"
     load_seconds = 0.0
+    per_request_schema = True     # HTTP 요청마다 스키마가 따로 가므로 한 풀에서 병렬 가능
+
+    # 디스크 응답 캐시 — 개발 반복의 핵심.
+    # NIM 은 건당 25~66s 라 dev 40건(160콜)에 22분이 걸린다. 그 속도로는
+    # "무엇이 이득이고 무엇이 손해인지" 원인을 분리할 수 없다.
+    # 프롬프트가 그대로면 응답을 재사용하고, 규칙·후처리만 바꾼 재측정은 즉시 끝난다.
+    cache_dir: Optional[str] = None
 
     def __init__(
         self,
@@ -119,6 +138,11 @@ class ApiRunner:
         self.limiter = RateLimiter(int(rpm or os.environ.get("PPS_API_RPM", 40)))
         self.max_workers = max_workers
         self.use_response_format = use_response_format
+        self.cache_dir = os.environ.get("PPS_API_CACHE", ".cache/api")
+        self.cache_hits = 0
+        self.cache_misses = 0
+        if self.cache_dir:
+            os.makedirs(self.cache_dir, exist_ok=True)
         if not self.base_url or not self.api_key:
             raise RuntimeError(
                 "ApiRunner 에는 PPS_API_BASE 와 PPS_API_KEY 가 필요합니다.")
@@ -145,7 +169,43 @@ class ApiRunner:
             return False
 
     # ---- 호출 -----------------------------------------------------------
+    def _cache_key(self, messages: Messages, cfg: GenConfig) -> str:
+        import hashlib
+        payload = json.dumps({
+            "model": self.model,
+            "messages": messages,
+            "temperature": cfg.temperature,
+            "max_tokens": cfg.max_tokens,
+            "schema": cfg.schema,
+        }, ensure_ascii=False, sort_keys=True)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _cache_get(self, key: str) -> Optional[str]:
+        if not self.cache_dir:
+            return None
+        p = os.path.join(self.cache_dir, key + ".txt")
+        if not os.path.exists(p):
+            return None
+        with open(p, encoding="utf-8") as f:
+            return f.read()
+
+    def _cache_put(self, key: str, text: str) -> None:
+        if not self.cache_dir or not text:
+            return
+        p = os.path.join(self.cache_dir, key + ".txt")
+        tmp = p + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, p)
+
     def _one(self, messages: Messages, cfg: GenConfig, attempt: int = 0) -> str:
+        if attempt == 0:
+            key = self._cache_key(messages, cfg)
+            hit = self._cache_get(key)
+            if hit is not None:
+                self.cache_hits += 1
+                return hit
+            self.cache_misses += 1
         import urllib.error
         import urllib.request
 
@@ -180,7 +240,9 @@ class ApiRunner:
         try:
             with urllib.request.urlopen(req, timeout=180) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-            return data["choices"][0]["message"]["content"] or ""
+            text = data["choices"][0]["message"]["content"] or ""
+            self._cache_put(self._cache_key(messages, cfg), text)
+            return text
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", "replace")[:300]
             # 429/5xx 는 지수 백오프 재시도
@@ -200,16 +262,27 @@ class ApiRunner:
 
     def generate(self, batch: List[Messages], cfg: GenConfig) -> List[str]:
         """레이트리밋 안에서 스레드 병렬 호출. 실패 건은 빈 문자열."""
+        return self.generate_mixed(batch, [cfg] * len(batch))
+
+    def generate_mixed(self, batch: List[Messages], cfgs: List[GenConfig],
+                       on_done=None) -> List[str]:
+        """요청마다 다른 GenConfig(스키마) — 전체를 한 풀에서 병렬 실행.
+
+        스키마별로 배치를 쪼개 순차 실행하면 워커가 놀아서 dev 20건에 10분이 걸렸다.
+        HTTP 는 요청마다 스키마를 따로 보내므로 굳이 묶을 이유가 없다.
+        """
         from concurrent.futures import ThreadPoolExecutor
 
         out: List[str] = [""] * len(batch)
 
         def work(i: int) -> None:
             try:
-                out[i] = self._one(batch[i], cfg)
+                out[i] = self._one(batch[i], cfgs[i])
             except Exception as e:                       # noqa: BLE001
                 print(f"  ! API 실패 [{i}] {type(e).__name__}: {str(e)[:160]}")
                 out[i] = ""
+            if on_done:
+                on_done(i)
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as ex:
             list(ex.map(work, range(len(batch))))

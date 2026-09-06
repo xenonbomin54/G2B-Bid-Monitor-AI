@@ -35,7 +35,7 @@ PKG = os.path.join(ROOT, "pps")
 
 # 의존 순서 (앞이 먼저 로드된다)
 MODULES = [
-    "law", "records", "evidence", "presence", "pumnum",
+    "law", "records", "evidence", "presence", "pumnum", "gosimatch", "compare", "spec", "schedule",
     "sections", "gating", "prompts", "runner", "pipeline", "submission",
 ]
 

@@ -8,3 +8,5 @@ apiapiapi.py
 .env
 build/
 submit.zip
+.cache/
+out/

@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from . import evidence, gating, presence, prompts, pumnum
+from . import compare, evidence, gating, presence, prompts, pumnum, schedule
 from .records import ABSENCE, ITEMS, Record
 from .runner import GenConfig, run_with_fallback
 
@@ -96,6 +96,7 @@ class Stats:
     seconds: float = 0.0
     # 규칙 2-1) 공고당 고정 LLM 정상 호출 1회 이상. 0이 아니면 제출물이 무효 처리된다.
     records_without_call: int = 0
+    n_rule_overrides: int = 0        # 규칙이 LLM 의 1 을 0 으로 내린 횟수
 
     def report(self) -> str:
         lines = [
@@ -236,22 +237,47 @@ class Pipeline:
                     print(f"  {done}/{len(tasks)} … {time.time() - t0:.0f}s")
             return True
 
-        # 1단계 — 필수 호출. 공고당 1회는 반드시 수행한다(규칙 2-1).
-        #        시간이 모자라도 건너뛰지 않는다. 여기를 건너뛰면 '제출 요건 미충족'
-        #        으로 제출물 전체가 무효 처리되며, 이는 시간 초과보다 나쁜 결과다.
-        for sig in sigs:
-            idxs = [i for i in by_sig[sig] if tasks[i].mandatory]
-            if idxs:
-                execute(idxs, sig, skippable=False)
-        n_mandatory = sum(1 for t in tasks if t.mandatory)
-        if progress:
-            print(f"  ✓ 필수 호출 {n_mandatory}건 완료 ({time.time() - t0:.0f}s)")
+        if getattr(self.runner, "per_request_schema", False):
+            # 개발용(API·Mock) 경로 — 요청마다 스키마를 따로 보낼 수 있으므로
+            # 스키마별로 쪼개지 않고 전체를 한 풀에서 병렬 실행한다.
+            # (스키마별 순차 실행은 워커가 놀아 dev 20건에 10분이 걸렸다.)
+            # 필수 호출을 앞에 두어 시간이 끊겨도 규칙 2-1 이 먼저 충족되게 한다.
+            ordered = sorted(range(len(tasks)),
+                             key=lambda i: (not tasks[i].mandatory,
+                                            order.get(tasks[i].group.key, 99)))
+            cfgs = [GenConfig(max_tokens=self.max_tokens, seed=self.seed,
+                              schema=prompts.build_schema(tuple(tasks[i].items)))
+                    for i in ordered]
 
-        # 2단계 — 보강 호출. 남은 항목의 판정 품질을 올리지만, 없어도 제출은 유효하다.
-        for sig in sigs:
-            idxs = [i for i in by_sig[sig] if not tasks[i].mandatory]
-            if idxs and not execute(idxs, sig, skippable=True):
-                break
+            def _tick(_):
+                nonlocal done
+                done += 1
+                if progress and done % 20 == 0:
+                    print(f"  {done}/{len(tasks)} … {time.time() - t0:.0f}s")
+
+            res = self.runner.generate_mixed(
+                [tasks[i].messages for i in ordered], cfgs, on_done=_tick)
+            for i, text in zip(ordered, res):
+                outs[i] = text
+            done = len(tasks)
+        else:
+            # 제출용(vLLM) 경로 — 같은 스키마끼리 묶어야 제약 디코딩 배치가 효율적이다.
+            # 1단계 — 필수 호출. 공고당 1회는 반드시 수행한다(규칙 2-1).
+            #        시간이 모자라도 건너뛰지 않는다. 여기를 건너뛰면 '제출 요건 미충족'
+            #        으로 제출물 전체가 무효 처리되며, 이는 시간 초과보다 나쁜 결과다.
+            for sig in sigs:
+                idxs = [i for i in by_sig[sig] if tasks[i].mandatory]
+                if idxs:
+                    execute(idxs, sig, skippable=False)
+            n_mandatory = sum(1 for t in tasks if t.mandatory)
+            if progress:
+                print(f"  ✓ 필수 호출 {n_mandatory}건 완료 ({time.time() - t0:.0f}s)")
+
+            # 2단계 — 보강 호출. 남은 항목의 판정 품질을 올리지만, 없어도 제출은 유효하다.
+            for sig in sigs:
+                idxs = [i for i in by_sig[sig] if not tasks[i].mandatory]
+                if idxs and not execute(idxs, sig, skippable=True):
+                    break
 
         self.stats.n_calls = done
         self.stats.n_skipped = len(tasks) - done
@@ -291,11 +317,18 @@ class Pipeline:
             cell = judged.get(v) or {"위반여부": 0, "근거문구": None}
             hit = 1 if cell.get("위반여부") == 1 else 0
 
-            # 규칙이 확정적으로 아니라고 하면 내린다 (정밀도 우선)
-            if rule_hint.get(v) == 0:
-                hit = 0
+            # 규칙이 확정적으로 판단한 칸은 규칙을 따른다
+            forced = rule_hint.get(v)
+            if forced is not None and forced != hit:
+                hit = forced
+                self.stats.n_rule_overrides += 1
 
             raw = cell.get("근거문구")
+            # v24: 인용한 금액이 등록값과 일치하면 '상이'가 아니다.
+            # dev 측정에서 v24 거짓양성 9/20 이 전부 이 유형이었다.
+            if v == "v24" and hit and compare.amount_is_matching_quote(rec, raw):
+                hit = 0
+                self.stats.n_rule_overrides += 1
             ev = evidence.clean(raw, src, is_absence=(v in ABSENCE), is_violation=bool(hit))
             if hit and v not in ABSENCE:
                 if ev:
@@ -308,10 +341,10 @@ class Pipeline:
         return out
 
     def _rule_hints(self, rec: Record) -> Dict[str, int]:
-        """정규식이 확정적으로 '위반 아님'이라고 말할 수 있는 칸.
+        """규칙이 확정적으로 말할 수 있는 칸. 값 0=위반 아님, 1=위반.
 
-        부재탐지 항목은 '요구 문구가 문서에 있으면' 위반이 아니다.
-        전체 원문을 절단 없이 보므로 LLM 보다 이 판단이 정확하다.
+        1 로 올리는 것은 규칙이 LLM 보다 확실히 나은 항목에만 쓴다.
+        지금은 v23 뿐이다 — dev 41건(협상+지방)에서 규칙 F1 0.909 vs LLM 0.000.
         """
         scans = presence.scan_record(rec)
         size = presence.size_restrictions(rec.full_text)
@@ -320,11 +353,14 @@ class Pipeline:
             hints["v10"] = 0                       # 직접생산확인 요구가 있다
         if size["중소기업"].present:
             hints["v11"] = 0                       # 중소기업자로 제한했다
-            hints["v16"] = 0
-        if size["소기업등"].present:
-            hints["v18"] = 0                       # 소기업·소상공인으로 제한했다
         if scans["v20"].present:
             hints["v20"] = 0                       # 대기업 참여제한을 명시했다
         if not scans["_SW사업"].present:
             hints["v20"] = 0                       # SW사업이 아니다
+
+        # v23 — 설명회일과 제안서 제출마감일의 간격을 조문 기준과 대조한다.
+        # 판단이 서는 경우(True/False)만 반영하고, 보류(None)는 LLM 에 맡긴다.
+        v23, _ = schedule.check_v23(rec)
+        if v23 is not None:
+            hints["v23"] = 1 if v23 else 0
         return hints
