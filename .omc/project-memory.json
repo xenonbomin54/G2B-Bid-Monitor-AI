@@ -105,6 +105,12 @@
   },
   "hotPaths": [
     {
+      "path": "STATUS.md",
+      "accessCount": 3,
+      "lastAccessed": 1788702239728,
+      "type": "file"
+    },
+    {
       "path": "pps/prompts.py",
       "accessCount": 2,
       "lastAccessed": 1788693247868,
@@ -123,21 +129,15 @@
       "type": "file"
     },
     {
-      "path": "STATUS.md",
+      "path": "tools/calibrate.py",
       "accessCount": 2,
-      "lastAccessed": 1788693516913,
+      "lastAccessed": 1788701949709,
       "type": "file"
     },
     {
       "path": "pps/pangro.py",
       "accessCount": 1,
       "lastAccessed": 1788691296091,
-      "type": "file"
-    },
-    {
-      "path": "tools/calibrate.py",
-      "accessCount": 1,
-      "lastAccessed": 1788693129239,
       "type": "file"
     },
     {
@@ -150,6 +150,12 @@
       "path": "tools/make_holdout.py",
       "accessCount": 1,
       "lastAccessed": 1788693810608,
+      "type": "file"
+    },
+    {
+      "path": "pps/presence.py",
+      "accessCount": 1,
+      "lastAccessed": 1788702149568,
       "type": "file"
     }
   ],

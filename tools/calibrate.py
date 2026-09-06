@@ -77,8 +77,10 @@ def main() -> int:
         c = sum(1 for r in pred.values() if r.get(it) == 1)
         tot_pred += c
         rate = c / n
+        # ⚠️ 재현율 0 을 1.0 으로 갈음하면 상한이 부풀려진다(실제로 겪은 버그).
+        #    라벨이 없을 때만 1.0(=재현율 상한)을 가정한다.
         recall = rep.items[it].recall if rep else 1.0
-        ceil = f1_ceiling(rate, args.true_rate, recall or 1.0)
+        ceil = f1_ceiling(rate, args.true_rate, recall)
         ceilings.append(ceil)
         line = f"{it:>5} {rate:>7.1%} {ceil:>7.3f}"
         if rep:

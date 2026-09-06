@@ -111,8 +111,9 @@ def main(argv=None) -> int:
     ap.add_argument("--max-model-len", type=int, default=16384)
     ap.add_argument("--max-tokens", type=int, default=1200)
     ap.add_argument("--quant", default="int8_per_channel_weight_only")
-    ap.add_argument("--no-verify", action="store_true",
-                    help="2단계 검증 생략 (기본은 수행 — 과잉 판정을 걷어낸다)")
+    ap.add_argument("--verify", action="store_true",
+                    help="2단계 검증 — dev200 측정에서 상한을 0.484→0.421 로 깎았다. "
+                         "취소 80건 중 진짜양성이 28건이라 재현율 손실이 크다. 기본 비활성.")
     ap.add_argument("--time-budget", type=float,
                     default=float(os.environ.get("PPS_TIME_BUDGET", 6300)),
                     help="초. 프로세스 시작 기준. 소진되면 남은 호출을 포기하고 "
@@ -175,7 +176,7 @@ def main(argv=None) -> int:
         return 0
 
     dropped = {}
-    if not args.no_verify:
+    if args.verify:
         try:
             dropped = pipe.verify(recs, judged, chunk=args.chunk, progress=True)
         except Exception as e:                              # noqa: BLE001
