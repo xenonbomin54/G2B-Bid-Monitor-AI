@@ -17,6 +17,31 @@ _FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.S)
 
 # --------------------------------------------------------------------------- 파싱
 
+def _repair_truncated(s: str) -> Optional[Any]:
+    """토큰 예산에서 잘린 JSON 을 살린다.
+
+    max_tokens 를 넘겨 중간에서 끊기면 통째로 버려져 그 그룹 전 항목이 0이 된다.
+    마지막으로 완결된 항목까지만 남기고 닫아서 건질 수 있는 만큼 건진다.
+    """
+    s = s.strip()
+    if not s.startswith("{"):
+        i = s.find("{")
+        if i < 0:
+            return None
+        s = s[i:]
+    # 마지막으로 닫힌 중괄호 뒤에서 자르고 최상위를 닫는다
+    for cut in range(len(s) - 1, 0, -1):
+        if s[cut] != "}":
+            continue
+        cand = s[:cut + 1].rstrip().rstrip(",")
+        for suffix in ("}", ""):
+            try:
+                return json.loads(cand + suffix)
+            except json.JSONDecodeError:
+                continue
+    return None
+
+
 def extract_json(text: str) -> Optional[Any]:
     text = (text or "").strip()
     if not text:
@@ -31,7 +56,12 @@ def extract_json(text: str) -> Optional[Any]:
         try:
             return json.loads(text[i:j + 1])
         except json.JSONDecodeError:
-            return None
+            pass
+    # 코드펜스 안이 잘린 경우까지 포함해 복구를 시도한다
+    for cand in (*(m.group(1) for m in _FENCE.finditer(text)), text):
+        got = _repair_truncated(cand)
+        if got is not None:
+            return got
     return None
 
 
@@ -54,6 +84,14 @@ def parse_group(text: str, items: Sequence[str]) -> Tuple[Dict[str, Dict[str, An
     missing: List[str] = []
     for v in items:
         raw = obj.get(v) if isinstance(obj, dict) else None
+
+        # 제약 디코딩이 없는 환경(로컬 검증 등)에서는 모델이 축약형을 낸다:
+        #   {"v10": 0}  또는  {"v10": "0"}  대신  {"v10": {"위반여부": 0, "근거문구": null}}
+        # 형식이 다르다고 버리면 그룹 전체가 0이 되므로 값만 받아 살린다.
+        if isinstance(raw, (int, float, bool, str)):
+            out[v] = {"위반여부": _as01(raw), "근거문구": None}
+            continue
+
         if not isinstance(raw, dict):
             missing.append(v)
             out[v] = {"위반여부": 0, "근거문구": None}
@@ -97,6 +135,8 @@ class Stats:
     # 규칙 2-1) 공고당 고정 LLM 정상 호출 1회 이상. 0이 아니면 제출물이 무효 처리된다.
     records_without_call: int = 0
     n_rule_overrides: int = 0        # 규칙이 LLM 의 1 을 0 으로 내린 횟수
+    n_verified: int = 0
+    n_verify_dropped: int = 0
 
     def report(self) -> str:
         lines = [
@@ -109,6 +149,8 @@ class Stats:
             f"(그중 복원 {self.n_evidence_repaired}) · 폐기 {self.n_evidence_dropped}",
             f"소요 {self.seconds:.1f}s",
         ]
+        if self.n_verified:
+            lines.append(f"2단계 검증 {self.n_verified}건 중 {self.n_verify_dropped}건 취소")
         if self.n_skipped:
             lines.insert(1, f"⏱ 시간예산으로 생략한 보강 호출 {self.n_skipped}"
                             f"/{self.n_planned} — 해당 항목은 0으로 제출됨")
@@ -300,9 +342,72 @@ class Pipeline:
         self.stats.seconds = time.time() - t0
         return judged
 
+    # ---- 2단계 검증 -------------------------------------------------------
+    def verify(self, recs: Sequence[Record],
+               judged: Dict[str, Dict[str, Dict[str, Any]]],
+               chunk: int = 64, progress: bool = True) -> Dict[str, set]:
+        """1로 판정된 칸만 다시 물어 과잉 판정을 걷어낸다.
+
+        예측률이 실제 위반율보다 높으면 정밀도에 천장이 생긴다.
+        dev200b 실측: 평균 예측률 4.29% vs 추정 실제 양성률 2% → Macro F1 상한 0.4883.
+        (실제 리더보드 0.42458 과 거의 일치했다.)
+        정확도를 올리는 것만으로는 이 천장을 못 넘고 **예측을 줄여야** 한다.
+
+        반환: {공고id: 취소된 항목 집합}
+        """
+        by_rec = {r.id: r for r in recs}
+        targets: List[Tuple[str, str, Optional[str]]] = []
+        for rid, cells in judged.items():
+            if rid not in by_rec:
+                continue
+            g = gating.gate(by_rec[rid])
+            for item, cell in cells.items():
+                if cell.get("위반여부") == 1 and g.get(item, True):
+                    targets.append((rid, item, cell.get("근거문구")))
+
+        if not targets:
+            return {}
+        if progress:
+            print(f"  [2단계 검증] 대상 {len(targets)}건")
+
+        msgs = [prompts.build_verify_messages(by_rec[rid], item, ev, self.tbl)
+                for rid, item, ev in targets]
+        cfg = GenConfig(max_tokens=200, seed=self.seed, schema=prompts.VERIFY_SCHEMA)
+
+        t0 = time.time()
+        if getattr(self.runner, "per_request_schema", False):
+            outs = self.runner.generate_mixed(msgs, [cfg] * len(msgs))
+        else:
+            outs = []
+            for s in range(0, len(msgs), chunk):
+                outs.extend(run_with_fallback(self.runner, msgs[s:s + chunk], cfg))
+
+        dropped: Dict[str, set] = {}
+        kept = 0
+        for (rid, item, _), text in zip(targets, outs):
+            obj = extract_json(text)
+            # 판단 불가(빈 출력·파싱 실패)면 원래 판정을 유지한다 —
+            # 검증 실패를 이유로 재현율을 잃지 않는다.
+            if not isinstance(obj, dict):
+                kept += 1
+                continue
+            if _as01(obj.get("위반유지", obj.get("유지", 1))) == 1:
+                kept += 1
+            else:
+                dropped.setdefault(rid, set()).add(item)
+
+        n_drop = sum(len(s) for s in dropped.values())
+        self.stats.n_verified = len(targets)
+        self.stats.n_verify_dropped = n_drop
+        if progress:
+            print(f"  [2단계 검증] 유지 {kept} · 취소 {n_drop} "
+                  f"({n_drop / max(1, len(targets)):.0%}) · {time.time() - t0:.0f}s")
+        return dropped
+
     # ---- 결합 -----------------------------------------------------------
     def finalize(self, rec: Record,
-                 judged: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+                 judged: Dict[str, Dict[str, Any]],
+                 dropped: Optional[set] = None) -> Dict[str, Dict[str, Any]]:
         """LLM 판정 + 게이팅 + 규칙을 결합해 최종 24항목을 만든다."""
         g = gating.gate(rec)
         src = rec.full_text
@@ -316,6 +421,8 @@ class Pipeline:
                 continue
             cell = judged.get(v) or {"위반여부": 0, "근거문구": None}
             hit = 1 if cell.get("위반여부") == 1 else 0
+            if dropped and v in dropped:      # 2단계 검증에서 취소된 칸
+                hit = 0
 
             # 규칙이 확정적으로 판단한 칸은 규칙을 따른다
             forced = rule_hint.get(v)

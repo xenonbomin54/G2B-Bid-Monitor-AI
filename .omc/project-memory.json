@@ -1,0 +1,157 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1788689398587,
+  "projectRoot": "/Users/xenonbomin54/나라장터",
+  "techStack": {
+    "languages": [],
+    "frameworks": [],
+    "packageManager": null,
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": null,
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": null,
+    "scripts": {}
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": null
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "build": {
+      "path": "build",
+      "purpose": "Build output",
+      "fileCount": 2,
+      "lastAccessed": 1788689398575,
+      "keyFiles": [
+        "requirements.txt",
+        "script.py"
+      ]
+    },
+    "open": {
+      "path": "open",
+      "purpose": null,
+      "fileCount": 5,
+      "lastAccessed": 1788689398576,
+      "keyFiles": [
+        "README.md",
+        "dev.jsonl.gz",
+        "dev_labels.csv",
+        "sample_submission.csv",
+        "train_unlabeled.jsonl.gz"
+      ]
+    },
+    "out": {
+      "path": "out",
+      "purpose": "Build output",
+      "fileCount": 12,
+      "lastAccessed": 1788689398576,
+      "keyFiles": [
+        "deadline_test.csv",
+        "dev200_eval.log",
+        "dev200_pred.csv",
+        "dev200b_eval.log",
+        "dev200b_pred.csv"
+      ]
+    },
+    "pps": {
+      "path": "pps",
+      "purpose": null,
+      "fileCount": 17,
+      "lastAccessed": 1788689398576,
+      "keyFiles": [
+        "__init__.py",
+        "compare.py",
+        "evidence.py",
+        "gating.py",
+        "gosimatch.py"
+      ]
+    },
+    "tools": {
+      "path": "tools",
+      "purpose": null,
+      "fileCount": 5,
+      "lastAccessed": 1788689398576,
+      "keyFiles": [
+        "analyze_errors.py",
+        "audit_gates.py",
+        "evaluate.py",
+        "probe_presence.py",
+        "probe_sections.py"
+      ]
+    },
+    "open/data": {
+      "path": "open/data",
+      "purpose": "Data files",
+      "fileCount": 3,
+      "lastAccessed": 1788689398577,
+      "keyFiles": [
+        "test.jsonl.gz",
+        "정답스키마_디코딩.json",
+        "항목표.json"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "pps/prompts.py",
+      "accessCount": 2,
+      "lastAccessed": 1788693247868,
+      "type": "file"
+    },
+    {
+      "path": "pps/pipeline.py",
+      "accessCount": 2,
+      "lastAccessed": 1788693396906,
+      "type": "file"
+    },
+    {
+      "path": "tools/evaluate.py",
+      "accessCount": 2,
+      "lastAccessed": 1788693421849,
+      "type": "file"
+    },
+    {
+      "path": "STATUS.md",
+      "accessCount": 2,
+      "lastAccessed": 1788693516913,
+      "type": "file"
+    },
+    {
+      "path": "pps/pangro.py",
+      "accessCount": 1,
+      "lastAccessed": 1788691296091,
+      "type": "file"
+    },
+    {
+      "path": "tools/calibrate.py",
+      "accessCount": 1,
+      "lastAccessed": 1788693129239,
+      "type": "file"
+    },
+    {
+      "path": "labeling/README.md",
+      "accessCount": 1,
+      "lastAccessed": 1788693791382,
+      "type": "file"
+    },
+    {
+      "path": "tools/make_holdout.py",
+      "accessCount": 1,
+      "lastAccessed": 1788693810608,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

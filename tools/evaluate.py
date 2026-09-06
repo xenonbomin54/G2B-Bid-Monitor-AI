@@ -35,6 +35,8 @@ def main() -> int:
     ap.add_argument("--chunk", type=int, default=64)
     ap.add_argument("--save", default=None, help="예측을 submission 형식으로 저장")
     ap.add_argument("--no-rules", action="store_true", help="규칙 결합 끄고 LLM 단독 측정")
+    ap.add_argument("--verify", action="store_true",
+                    help="2단계 검증 — 1로 판정된 칸을 재질의해 과잉 판정을 걷어낸다")
     ap.add_argument("--data", default=os.path.join(OPEN, "dev.jsonl.gz"))
     ap.add_argument("--labels", default=os.path.join(OPEN, "dev_labels.csv"))
     args = ap.parse_args()
@@ -53,10 +55,14 @@ def main() -> int:
 
     judged = pipe.run(recs, chunk=args.chunk)
 
+    dropped = {}
+    if args.verify:
+        dropped = pipe.verify(recs, judged, chunk=args.chunk)
+
     rows = []
     pred = {}
     for r in recs:
-        final = pipe.finalize(r, judged.get(r.id, {}))
+        final = pipe.finalize(r, judged.get(r.id, {}), dropped.get(r.id))
         rows.append(submission.to_row(r.id, final))
         pred[r.id] = {v: final[v]["위반여부"] for v in ITEMS}
 

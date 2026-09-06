@@ -111,6 +111,8 @@ def main(argv=None) -> int:
     ap.add_argument("--max-model-len", type=int, default=16384)
     ap.add_argument("--max-tokens", type=int, default=1200)
     ap.add_argument("--quant", default="int8_per_channel_weight_only")
+    ap.add_argument("--no-verify", action="store_true",
+                    help="2단계 검증 생략 (기본은 수행 — 과잉 판정을 걷어낸다)")
     ap.add_argument("--time-budget", type=float,
                     default=float(os.environ.get("PPS_TIME_BUDGET", 6300)),
                     help="초. 프로세스 시작 기준. 소진되면 남은 호출을 포기하고 "
@@ -172,10 +174,18 @@ def main(argv=None) -> int:
         log(f"추론 실패 → 기본값 제출 유지: {type(e).__name__}: {e}")
         return 0
 
+    dropped = {}
+    if not args.no_verify:
+        try:
+            dropped = pipe.verify(recs, judged, chunk=args.chunk, progress=True)
+        except Exception as e:                              # noqa: BLE001
+            log(f"2단계 검증 실패 → 1단계 판정 유지: {type(e).__name__}")
+
     rows = []
     for r in recs:
         try:
-            rows.append(submission.to_row(r.id, pipe.finalize(r, judged.get(r.id, {}))))
+            rows.append(submission.to_row(
+                r.id, pipe.finalize(r, judged.get(r.id, {}), dropped.get(r.id))))
         except Exception as e:                              # noqa: BLE001
             log(f"{r.id} 후처리 실패 → 기본값: {type(e).__name__}")
             rows.append(submission.empty_row(r.id))
