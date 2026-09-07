@@ -29,12 +29,33 @@ _AMT = re.compile(
 _AMT_UNIT = re.compile(r"(\d+(?:\.\d+)?)\s*(억|천만|백만|만)\s*원")
 _UNIT = {"억": 100_000_000, "천만": 10_000_000, "백만": 1_000_000, "만": 10_000}
 
+# ⚠️ 자릿수 단위가 뒤에 붙는 표기 — "사업예산: 1,250,000천원" (= 12.5억).
+#    이걸 원으로 읽으면 1,250,000 원이 되어 1,000배 틀린다. dev 에서 PPS-DEV-25 가
+#    이 때문에 v24 거짓양성으로 잡혔다. _AMT 보다 **먼저** 처리하고 그 구간은 건너뛴다.
+_AMT_SUFFIX = re.compile(
+    r"(?:[￦₩]\s*|금\s*)?(\d{1,3}(?:,\d{3})+|\d+)\s*(천원|백만원|천만원|억원|만원)")
+_SUFFIX_UNIT = {"천원": 1_000, "만원": 10_000, "백만원": 1_000_000,
+                "천만원": 10_000_000, "억원": 100_000_000}
+
 
 def amounts_in(text: str) -> List[int]:
-    out = []
+    out: List[int] = []
+    # 단위 접미사가 붙은 표기를 먼저 잡고, 그 구간은 뒤 패턴에서 제외한다.
+    spans = []
+    for m in _AMT_SUFFIX.finditer(text):
+        out.append(int(float(m.group(1).replace(",", "")) * _SUFFIX_UNIT[m.group(2)]))
+        spans.append((m.start(), m.end()))
+
+    def covered(i: int) -> bool:
+        return any(s <= i < e for s, e in spans)
+
     for m in _AMT.finditer(text):
+        if covered(m.start()):
+            continue
         out.append(int(m.group(1).replace(",", "")))
     for m in _AMT_UNIT.finditer(text):
+        if covered(m.start()):
+            continue
         out.append(int(float(m.group(1)) * _UNIT[m.group(2)]))
     return out
 
@@ -153,13 +174,21 @@ _지분율 = re.compile(
     r"(?:(\d{1,3}(?:\.\d+)?)\s*%|100\s*분의\s*(\d{1,3}))")
 _공동 = re.compile(r"공동\s*(?:수급|계약|도급|이행)|공동수급체|공동협정서")
 _분담이행 = re.compile(r"분담\s*이행")
+# 분담이행방식에는 최소지분율이 적용되지 않는다(지방 집행기준 제6장 제2절 1-나-3).
+# 다만 두 방식을 함께 허용하는 공고가 흔하므로, '분담이행' 표기만으로 보류하면
+# 공동이행 쪽 위반을 놓친다 → 공동이행 표기가 함께 있으면 보류하지 않는다.
+_공동이행 = re.compile(r"공동\s*이행")
+# 지분율 표기가 '공동수급체 구성원의 최소지분율'을 말하는지 가르는 주변 단서.
+# 이것 없이 숫자만 뽑으면 '부가세 10%'·'지분율 평가 배점' 같은 것이 섞인다.
+_공동문맥 = re.compile(r"공동|구성원|수급체|최소\s*지분|대표자|출자")
 
 
-def joint_shares(text: str) -> List[Tuple[str, float]]:
+def joint_shares(text: str, window: int = 120) -> List[Tuple[str, float]]:
     """본문에서 (인용구, 백분율) 목록. 판단하지 않고 후보만 모은다.
 
-    ⚠️ '지분율 평가 배점 10%' 처럼 자격과 무관한 표기도 걸린다.
-    그래서 값만 주지 않고 **인용구를 함께** 준다 — 판단은 모델이 한다.
+    주변 window 자 안에 공동수급 문맥 단서가 있는 것만 남긴다 — **후보 좁히기**다.
+    좁힌 뒤에도 '지분율 평가 배점 10%' 같은 것이 남을 수 있으므로
+    값만 주지 않고 **인용구를 함께** 준다. 판단은 모델이 한다.
     (STATUS.md 원칙 3: 정규식으로 의미 매칭을 흉내내지 않는다.)
     """
     out: List[Tuple[str, float]] = []
@@ -174,6 +203,9 @@ def joint_shares(text: str) -> List[Tuple[str, float]]:
             continue
         if not 0 < pct <= 100:
             continue
+        ctx = text[max(0, m.start() - window): m.end() + window]
+        if not _공동문맥.search(ctx):
+            continue
         quote = re.sub(r"\s+", " ",
                        text[max(0, m.start() - 60): m.end() + 30]).strip()
         key = quote[:40]
@@ -184,28 +216,57 @@ def joint_shares(text: str) -> List[Tuple[str, float]]:
     return out
 
 
+def check_v21(rec: Record) -> Tuple[Optional[bool], Optional[str]]:
+    """v21 — 공고가 정한 공동수급체 최소지분율이 법정 기준 미만인지 판정한다.
+
+    반환 (판정, 근거문구). 판정 None = 보류(LLM 에 맡긴다).
+
+    dev 200건 검증 (tools/probe_v21.py)
+      TP 6 · FP 0 · FN 0 → **규칙 F1 1.000** vs 같은 항목 LLM F1 0.500.
+      규칙이 LLM 보다 확실히 나으므로 강제한다 — v23 과 같은 근거다.
+        PPS-DEV-25  지방 3.0% < 5%      PPS-DEV-049 지방 4.0% < 5%
+        PPS-DEV-055 국가 5.0% < 10%     PPS-DEV-056 국가 0.5% < 10%
+        PPS-DEV-058 국가 5.0% < 10%     PPS-DEV-059 지방 2.0% < 5%
+      양성 6건 중 5건은 정답 근거문구가 빈칸이지만, 원문에는 지분율이 또박또박
+      적혀 있었다 — 라벨러가 인용을 생략한 것이지 근거가 없는 것이 아니었다.
+
+    보류하는 경우 (규칙이 답하지 않고 LLM 에 넘긴다)
+      · 지분율 표기를 못 찾음 — '부재'를 위반으로 보지 않는다. v21 은 부재탐지 항목이 아니다.
+      · 분담이행방식 — 조문상 최소지분율이 적용되지 않는다
+        (지방 집행기준 제6장 제2절 1-나-3, 국가도 공동이행방식 조항이다).
+    """
+    t = rec.full_text
+    if _분담이행.search(t) and not _공동이행.search(t):
+        return None, None
+
+    found = joint_shares(t)
+    if not found:
+        return None, None
+
+    기준 = law.공동_최소지분율_기준(rec.적용계약법, rec.업무구분, rec.추정가격)
+    worst = min(found, key=lambda x: x[1])
+    if worst[1] < 기준:
+        return True, worst[0]
+    return False, None
+
+
 def joint_share_check(rec: Record) -> str:
-    """공동수급체 최소지분율의 법정 하한을 계산해 사실로 준다 (v21).
+    """공동수급체 최소지분율 기준을 계산해 사실로 준다 (v21).
 
     왜 계산해서 주는가
-      모델은 v21 판정 기준("법정 하한보다 낮으면 위반")은 받지만 **하한값 자체를
-      모른다.** 지방 5% / 국가 10% 이고 각각 20% 범위에서 가감할 수 있어
-      실효 하한이 4% / 8% 다. 이건 조문에서 계산되는 값이므로 코드가 준다.
+      모델은 v21 판정 기준("법정 기준보다 낮으면 위반")은 받지만 **기준값 자체를
+      모른다.** 지방 5% / 국가 10% 이고 조문에서 계산되는 값이므로 코드가 준다.
       (fact_block 이 금액 구간·지역제한 허용여부를 계산해 주는 것과 같은 이유)
 
-    강제하지 않는 이유
-      dev 200건에서 v21 양성 6건 중 **근거문구가 있는 것은 1건뿐**이다
-      (PPS-DEV-25 "최소 지분율 3% 이상"). 나머지 5건은 정답 근거가 빈칸이어서
-      위반의 형태를 아직 규명하지 못했다. 규칙이 6건 중 1건만 설명하는 상태로
-      강제하면 나머지를 0 으로 덮어써 재현율을 잃는다.
-      → 사실만 제공한다. 규칙 강제는 v23(규칙 F1 0.909 vs LLM 0.000)처럼
-        규칙이 LLM 보다 확실히 나을 때만 한다.
+    ⚠️ 20% 가감 단서를 적용하면 안 된다 — law.py 의 주석 참조.
+       가감 하한(4%/8%)을 쓰면 PPS-DEV-049(지방 4.0%)를 놓친다.
+
+    판정 자체는 `check_v21` 이 규칙으로 강제한다(dev F1 1.000). 이 블록은
+    모델이 근거문구를 고를 수 있게 같은 사실을 프롬프트에도 넣어 주는 것이다.
     """
-    하한 = law.공동_최소지분율_하한(rec.적용계약법, rec.업무구분, rec.추정가격)
-    기준 = (law.공동_최소지분율_지방 if rec.is_지방
-            else law.공동_최소지분율_국가)
-    parts = [f"법정 최소지분율 {기준:.0f}% "
-             f"({rec.적용계약법}), 20% 범위 가감 허용 → 실효 하한 {하한:.0f}% 미만이면 위반"]
+    기준 = law.공동_최소지분율_기준(rec.적용계약법, rec.업무구분, rec.추정가격)
+    parts = [f"법정 최소지분율 {기준:g}% ({rec.적용계약법}). "
+             f"공고가 정한 구성원별 최소지분율이 {기준:g}% 미만이면 위반"]
 
     방식 = str(rec.meta.get("공동도급구성방식") or "").strip()
     if 방식:
@@ -221,12 +282,80 @@ def joint_share_check(rec: Record) -> str:
     if not found:
         parts.append("본문에서 지분율 수치를 찾지 못했다(표기가 없거나 형식이 달라서일 수 있다)")
     else:
-        lo = min(p for _, p in found)
-        판정 = "하한 미달" if lo < 하한 else "하한 이상"
-        parts.append(f"본문 지분율 표기 최소값 {lo:g}% → {판정}")
-        for quote, pct in found[:3]:
-            parts.append(f"  · {pct:g}% ← …{quote[:150]}…")
-    return " / ".join(parts[:2]) + ("\n  " + "\n  ".join(parts[2:]) if parts[2:] else "")
+        parts.append(f"본문에서 찾은 지분율 표기 {len(found)}건")
+        for quote, pct in found[:4]:
+            flag = f"  ← 기준 {기준:g}% 미만 = 위반" if pct < 기준 else ""
+            parts.append(f"  · {pct:g}%{flag}  …{quote[:140]}…")
+
+    return "\n  ".join(parts)
+
+
+# --------------------------------------------------------------------------- v24 값 대조
+
+_NUM = r"(\d{1,3}(?:,\d{3})+|\d{6,})"
+# 레이블이 붙은 금액만 본다. 레이블 없이 본문 금액을 다 긁으면 상투 문구에 걸린다
+# (STATUS.md: 단순 규칙 정밀도 0.12 로 실패한 원인).
+_LBL_추정가 = re.compile(r"추정\s*가격\s*[:：]?\s*(?:금\s*)?" + _NUM)
+_LBL_예산 = re.compile(
+    r"(?:배정\s*예산|사업\s*예산|예산\s*액|총\s*사업비)\s*[:：]?\s*(?:금\s*)?" + _NUM)
+# "입찰방법 : 제한경쟁입찰" / "계약방법 : 일반경쟁(총액…)" — 레이블 뒤 60자만 본다
+_LBL_방법 = re.compile(r"(?:입찰|계약)\s*방(?:법|식)\s*[:：]\s*([^\n]{0,60})")
+_경쟁유형 = re.compile(r"(일반경쟁|제한경쟁|지명경쟁|수의계약)")
+# 숫자 바로 뒤에 붙는 자릿수 단위 — 붙어 있으면 그 숫자는 원 단위가 아니다.
+_SUFFIX_AFTER = re.compile(r"\s*(?:천원|만원|백만원|천만원|억원)")
+
+
+def check_v24_positive(rec: Record) -> Tuple[bool, Optional[str]]:
+    """v24 — 공고문과 나라장터 등록값이 **실제로 다른 값**인 경우만 True.
+
+    ⛔ **파이프라인에 배선하지 않았다.** 측정 기록으로 남긴 것이다.
+       dev 200 실측:
+         LLM 단독  TP 2 FP 12 FN 6 → F1 0.182
+         규칙 단독  TP 2 FP  2 FN 6 → F1 0.333   ← 규칙이 더 낫다
+         합집합    TP 2 FP 15 FN 6 → F1 0.160   ← **LLM 보다 나쁘다**
+       규칙이 맞춘 2건이 LLM 이 이미 맞춘 것과 **같은 레코드**여서, 양성 전용으로
+       합쳐도 새 TP 는 0 이고 FP 만 늘어난다. 규칙 단독으로 넘기면 dev 는 오르지만
+       양성 8건 표본이라 09-07(세부품명 게이팅, 양성 19건 → 리더보드 −0.105)과 같은
+       도박이 된다. 리더보드로 검증할 여력이 생기면 규칙 단독을 시험해 볼 만하다.
+
+    잡는 두 가지
+      1) 레이블 붙은 금액 불일치 — PPS-DEV-29
+         본문 "추정가격 34,481,818원" vs 등록 36,118,183원
+      2) 레이블 붙은 경쟁유형 불일치 — PPS-DEV-057
+         본문 "입찰방법 : 제한경쟁입찰(…)" vs 등록 계약방법=일반경쟁
+
+    수의계약을 경쟁유형 대조에서 제외하는 이유: 등록이 수의계약인 공고가 본문에
+    제한경쟁 상투 문구를 달고 있어 거짓양성 2건이 나왔다(PPS-DEV-148 · 194).
+    """
+    t = rec.notice_text
+
+    def ok(v: int) -> bool:
+        return (_close(v, rec.추정가격) or _close(v, rec.배정예산)
+                or _close(v, round(rec.추정가격 * 1.1)))
+
+    for pat in (_LBL_추정가, _LBL_예산):
+        for m in pat.finditer(t):
+            # "사업예산: 1,250,000천원" 처럼 자릿수 단위가 뒤에 붙으면 이 숫자는
+            # 원 단위가 아니다 — 그대로 비교하면 1,000배 틀린다(PPS-DEV-25 거짓양성).
+            if _SUFFIX_AFTER.match(t, m.end()):
+                continue
+            v = int(m.group(1).replace(",", ""))
+            if not ok(v):
+                return True, re.sub(r"\s+", " ",
+                                    t[max(0, m.start() - 30): m.end() + 15]).strip()
+
+    reg = (rec.계약방법 or "").replace(" ", "")
+    if reg in ("일반경쟁", "제한경쟁"):
+        found = set()
+        first = None
+        for m in _LBL_방법.finditer(t):
+            for tm in _경쟁유형.finditer(m.group(1)):
+                found.add(tm.group(1))
+                if first is None:
+                    first = re.sub(r"\s+", " ", m.group(0)).strip()
+        if found and reg not in found:
+            return True, first
+    return False, None
 
 
 # --------------------------------------------------------------------------- 조항호 해석

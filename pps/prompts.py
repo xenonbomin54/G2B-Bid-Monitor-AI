@@ -319,6 +319,20 @@ VERIFY_SCHEMA: Dict[str, Any] = {
 }
 
 
+def _safe(label: str, fn) -> str:
+    """선택적 사실 블록을 감싼다. 실패하면 그 블록만 빼고 계속한다.
+
+    왜 필요한가: `Pipeline.render()` 는 **추론을 시작하기 전에 전 레코드에 대해**
+    호출된다. 한 건에서 예외가 나면 `pipe.run` 이 통째로 실패하고
+    제출본은 전 항목 0 이 된다(build_submit MAIN 의 예외 처리 경로).
+    보조 블록 하나가 없는 것과 제출 전체를 잃는 것은 비교가 안 된다.
+    """
+    try:
+        return fn()
+    except Exception as e:                                   # noqa: BLE001
+        return f"(계산 실패 — {label}: {type(e).__name__})"
+
+
 def build_messages(
     rec: Record,
     group: Group,
@@ -342,20 +356,23 @@ def build_messages(
     ]
     if law_text:
         parts.append(f"\n[관련 법령 조문]\n{law_text}")
-    parts.append(f"\n[나라장터 등록정보]\n{fact_block(rec)}")
+    parts.append("\n[나라장터 등록정보]\n" + _safe("등록정보", lambda: fact_block(rec)))
 
     if group.key == "G2기업규모" and gosi is not None:
-        parts.append(f"\n[중기부고시 경쟁제품 대조]\n{gosimatch.block(rec, gosi)}")
+        parts.append("\n[중기부고시 경쟁제품 대조]\n"
+                     + _safe("고시대조", lambda: gosimatch.block(rec, gosi)))
     if group.key == "G4설명회대조" and "v23" in items:
-        parts.append(f"\n[일정 검산]\n{schedule.fact_line(rec)}")
+        parts.append("\n[일정 검산]\n" + _safe("일정검산", lambda: schedule.fact_line(rec)))
     if group.key == "G3물품SW공동" and "v9" in items:
         # 모델명은 첨부 깊숙이 있어 섹션 파서가 놓친다(dev 입력누락 2건) → 후보를 따로 뽑아 준다
-        parts.append(f"\n[첨부에서 찾은 모델명·제조사 후보 줄 (v9)]\n{spec.candidate_block(rec)}")
+        parts.append("\n[첨부에서 찾은 모델명·제조사 후보 줄 (v9)]\n"
+                     + _safe("모델명후보", lambda: spec.candidate_block(rec)))
     if group.key == "G3물품SW공동" and "v21" in items:
         # 모델은 v21 기준("법정 하한보다 낮으면 위반")은 받지만 하한값을 모른다.
         # 지방 5% / 국가 10% 이고 20% 가감이 허용되므로 실효 하한은 4% / 8% —
         # 조문에서 계산되는 값이라 코드가 준다. 판정은 강제하지 않는다.
-        parts.append(f"\n[공동수급 최소지분율 (v21, 계산됨)]\n{compare.joint_share_check(rec)}")
+        parts.append("\n[공동수급 최소지분율 (v21, 계산됨)]\n"
+                     + _safe("공동지분율", lambda: compare.joint_share_check(rec)))
 
     parts.append(f"\n[공고 문서]\n{doc}")
     parts.append(

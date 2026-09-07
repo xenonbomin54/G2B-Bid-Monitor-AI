@@ -109,6 +109,8 @@ def main(argv=None) -> int:
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--chunk", type=int, default=64)
     ap.add_argument("--max-model-len", type=int, default=16384)
+    # 1200 으로 충분하다. 캐시 실측에서 정상 응답 최대가 580자였다 —
+    # 상한에 닿은 적이 없다. 자세한 근거는 pps/pipeline.py 의 max_tokens 주석 참조.
     ap.add_argument("--max-tokens", type=int, default=1200)
     ap.add_argument("--quant", default="int8_per_channel_weight_only")
     ap.add_argument("--verify", action="store_true",

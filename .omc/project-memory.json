@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1788689398587,
+  "lastScanned": 1788775822023,
   "projectRoot": "/Users/xenonbomin54/나라장터",
   "techStack": {
     "languages": [],
@@ -33,17 +33,26 @@
       "path": "build",
       "purpose": "Build output",
       "fileCount": 2,
-      "lastAccessed": 1788689398575,
+      "lastAccessed": 1788775822006,
       "keyFiles": [
         "requirements.txt",
         "script.py"
+      ]
+    },
+    "labeling": {
+      "path": "labeling",
+      "purpose": null,
+      "fileCount": 1,
+      "lastAccessed": 1788775822009,
+      "keyFiles": [
+        "README.md"
       ]
     },
     "open": {
       "path": "open",
       "purpose": null,
       "fileCount": 5,
-      "lastAccessed": 1788689398576,
+      "lastAccessed": 1788775822012,
       "keyFiles": [
         "README.md",
         "dev.jsonl.gz",
@@ -55,8 +64,8 @@
     "out": {
       "path": "out",
       "purpose": "Build output",
-      "fileCount": 12,
-      "lastAccessed": 1788689398576,
+      "fileCount": 26,
+      "lastAccessed": 1788775822013,
       "keyFiles": [
         "deadline_test.csv",
         "dev200_eval.log",
@@ -69,7 +78,7 @@
       "path": "pps",
       "purpose": null,
       "fileCount": 17,
-      "lastAccessed": 1788689398576,
+      "lastAccessed": 1788775822013,
       "keyFiles": [
         "__init__.py",
         "compare.py",
@@ -81,21 +90,21 @@
     "tools": {
       "path": "tools",
       "purpose": null,
-      "fileCount": 5,
-      "lastAccessed": 1788689398576,
+      "fileCount": 8,
+      "lastAccessed": 1788775822013,
       "keyFiles": [
         "analyze_errors.py",
         "audit_gates.py",
+        "calibrate.py",
         "evaluate.py",
-        "probe_presence.py",
-        "probe_sections.py"
+        "make_holdout.py"
       ]
     },
     "open/data": {
       "path": "open/data",
       "purpose": "Data files",
       "fileCount": 3,
-      "lastAccessed": 1788689398577,
+      "lastAccessed": 1788775822014,
       "keyFiles": [
         "test.jsonl.gz",
         "정답스키마_디코딩.json",
@@ -106,80 +115,32 @@
   "hotPaths": [
     {
       "path": "STATUS.md",
-      "accessCount": 15,
-      "lastAccessed": 1788762318285,
-      "type": "file"
-    },
-    {
-      "path": "pps/prompts.py",
-      "accessCount": 12,
-      "lastAccessed": 1788762100239,
-      "type": "file"
-    },
-    {
-      "path": "pps/gating.py",
       "accessCount": 10,
-      "lastAccessed": 1788755585910,
+      "lastAccessed": 1788782131446,
+      "type": "file"
+    },
+    {
+      "path": "pps/compare.py",
+      "accessCount": 8,
+      "lastAccessed": 1788781784976,
       "type": "file"
     },
     {
       "path": "pps/pipeline.py",
       "accessCount": 5,
-      "lastAccessed": 1788755601732,
+      "lastAccessed": 1788781752404,
       "type": "file"
     },
     {
-      "path": "pps/compare.py",
+      "path": "pps/runner.py",
       "accessCount": 4,
-      "lastAccessed": 1788762076793,
-      "type": "file"
-    },
-    {
-      "path": "tools/evaluate.py",
-      "accessCount": 2,
-      "lastAccessed": 1788693421849,
-      "type": "file"
-    },
-    {
-      "path": "tools/calibrate.py",
-      "accessCount": 2,
-      "lastAccessed": 1788701949709,
+      "lastAccessed": 1788777427515,
       "type": "file"
     },
     {
       "path": "pps/law.py",
       "accessCount": 2,
-      "lastAccessed": 1788755792709,
-      "type": "file"
-    },
-    {
-      "path": "pps/pangro.py",
-      "accessCount": 1,
-      "lastAccessed": 1788691296091,
-      "type": "file"
-    },
-    {
-      "path": "labeling/README.md",
-      "accessCount": 1,
-      "lastAccessed": 1788693791382,
-      "type": "file"
-    },
-    {
-      "path": "tools/make_holdout.py",
-      "accessCount": 1,
-      "lastAccessed": 1788693810608,
-      "type": "file"
-    },
-    {
-      "path": "pps/presence.py",
-      "accessCount": 1,
-      "lastAccessed": 1788702149568,
-      "type": "file"
-    },
-    {
-      "path": "tools/probe_v21.py",
-      "accessCount": 1,
-      "lastAccessed": 1788755764544,
+      "lastAccessed": 1788776590618,
       "type": "file"
     }
   ],

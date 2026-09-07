@@ -1,0 +1,328 @@
+{
+  "version": 1,
+  "jobId": "97a17500-3549-47a2-afdf-50dd9538f056",
+  "sessionId": "23dcd336-42a8-4e5d-8b6f-565031b65cdf",
+  "scopeKey": "16981c8f764238869af32b9d5233c05a58ed64ff786d7e8ebe26ae1413cd6688",
+  "revision": 42,
+  "createdAt": "2026-09-07T10:14:58.470Z",
+  "updatedAt": "2026-09-07T10:17:03.202Z",
+  "producerGraceExpiresAt": "2026-09-07T10:15:28.470Z",
+  "bestEffortDeadlineAt": "2026-09-07T10:16:19.470Z",
+  "producers": {
+    "core": {
+      "state": "sealed",
+      "intentKey": "d5411ed8abc6db784429b80758252ef70f06cf5702ffb5ad96d871d9cf830d77",
+      "payloadDigest": "d5411ed8abc6db784429b80758252ef70f06cf5702ffb5ad96d871d9cf830d77",
+      "sealedAt": "2026-09-07T10:14:58.513Z",
+      "sealedBy": "foreground"
+    },
+    "wiki": {
+      "state": "no-op",
+      "sealedAt": "2026-09-07T10:14:58.470Z",
+      "sealedBy": "wiki-producer"
+    }
+  },
+  "actions": {
+    "foreground-cleanup": {
+      "class": "required",
+      "phase": "deferred-required",
+      "status": "completed",
+      "attempts": 0,
+      "idempotencyKey": "febf6dba2f2536433960a07f7cedce72e946b43ced0896570df80f017b8914d2",
+      "payload": {
+        "transcriptPath": "/Users/xenonbomin54/.claude/projects/-Users-xenonbomin54-----/23dcd336-42a8-4e5d-8b6f-565031b65cdf.jsonl",
+        "cwd": "/Users/xenonbomin54/나라장터",
+        "reason": "other",
+        "input": {
+          "session_id": "23dcd336-42a8-4e5d-8b6f-565031b65cdf",
+          "transcript_path": "/Users/xenonbomin54/.claude/projects/-Users-xenonbomin54-----/23dcd336-42a8-4e5d-8b6f-565031b65cdf.jsonl",
+          "cwd": "/Users/xenonbomin54/나라장터",
+          "prompt_id": "d06d483d-0e4a-48d5-8358-0ef02c456202",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "23dcd336-42a8-4e5d-8b6f-565031b65cdf",
+          "ended_at": "2026-09-07T10:14:58.452Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {},
+        "foregroundResult": {
+          "removedTransientFiles": 3,
+          "completedAt": "2026-09-07T10:14:58.512Z"
+        }
+      },
+      "budgetMs": 9000,
+      "completedAt": "2026-09-07T10:14:58.513Z",
+      "lastOutcomeCode": "completed"
+    },
+    "wiki-capture": {
+      "class": "required",
+      "phase": "deferred-required",
+      "status": "completed",
+      "attempts": 0,
+      "idempotencyKey": "1719cd1ef5b51e0269b78c4cb8c9308c9c1f7b82fd1c067fc034c060f23863f5",
+      "payload": {},
+      "budgetMs": 9000,
+      "completedAt": "2026-09-07T10:14:58.470Z"
+    },
+    "team-cleanup": {
+      "class": "required",
+      "phase": "deferred-required",
+      "status": "completed",
+      "attempts": 1,
+      "idempotencyKey": "cee6ac31df545408e1e822247ac249b3f8182a98a5fe8e448ae3b251e55bdee1",
+      "payload": {
+        "transcriptPath": "/Users/xenonbomin54/.claude/projects/-Users-xenonbomin54-----/23dcd336-42a8-4e5d-8b6f-565031b65cdf.jsonl",
+        "cwd": "/Users/xenonbomin54/나라장터",
+        "reason": "other",
+        "input": {
+          "session_id": "23dcd336-42a8-4e5d-8b6f-565031b65cdf",
+          "transcript_path": "/Users/xenonbomin54/.claude/projects/-Users-xenonbomin54-----/23dcd336-42a8-4e5d-8b6f-565031b65cdf.jsonl",
+          "cwd": "/Users/xenonbomin54/나라장터",
+          "prompt_id": "d06d483d-0e4a-48d5-8358-0ef02c456202",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "23dcd336-42a8-4e5d-8b6f-565031b65cdf",
+          "ended_at": "2026-09-07T10:14:58.452Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 9000,
+      "claimedAt": "2026-09-07T10:14:58.545Z",
+      "runner": {
+        "attempt": 1,
+        "runnerNonce": "6430bb05-a048-4850-a8a1-7383fb2dc673",
+        "phase": "terminal",
+        "deadlineAt": "2026-09-07T10:15:08.516Z"
+      },
+      "lastOutcomeCode": "completed",
+      "completedAt": "2026-09-07T10:14:58.659Z"
+    },
+    "python-cleanup": {
+      "class": "required",
+      "phase": "deferred-required",
+      "status": "completed",
+      "attempts": 1,
+      "idempotencyKey": "1f1370c4ac056606059d517e2f106b602d8cbcb04587b3fcc5f3b9f89e649cd0",
+      "payload": {
+        "transcriptPath": "/Users/xenonbomin54/.claude/projects/-Users-xenonbomin54-----/23dcd336-42a8-4e5d-8b6f-565031b65cdf.jsonl",
+        "cwd": "/Users/xenonbomin54/나라장터",
+        "reason": "other",
+        "input": {
+          "session_id": "23dcd336-42a8-4e5d-8b6f-565031b65cdf",
+          "transcript_path": "/Users/xenonbomin54/.claude/projects/-Users-xenonbomin54-----/23dcd336-42a8-4e5d-8b6f-565031b65cdf.jsonl",
+          "cwd": "/Users/xenonbomin54/나라장터",
+          "prompt_id": "d06d483d-0e4a-48d5-8358-0ef02c456202",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "23dcd336-42a8-4e5d-8b6f-565031b65cdf",
+          "ended_at": "2026-09-07T10:14:58.452Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 9000,
+      "claimedAt": "2026-09-07T10:14:58.676Z",
+      "runner": {
+        "attempt": 1,
+        "runnerNonce": "0195996f-54dc-458a-84f0-8ce4eb333cb2",
+        "phase": "terminal",
+        "deadlineAt": "2026-09-07T10:15:08.516Z"
+      },
+      "lastOutcomeCode": "completed",
+      "completedAt": "2026-09-07T10:14:58.823Z"
+    },
+    "reply-cleanup": {
+      "class": "required",
+      "phase": "deferred-required",
+      "status": "completed",
+      "attempts": 1,
+      "idempotencyKey": "0b3a8b47c28b26d56aca004d4f572b96c118f16819c0d35162418816f9a5420a",
+      "payload": {
+        "transcriptPath": "/Users/xenonbomin54/.claude/projects/-Users-xenonbomin54-----/23dcd336-42a8-4e5d-8b6f-565031b65cdf.jsonl",
+        "cwd": "/Users/xenonbomin54/나라장터",
+        "reason": "other",
+        "input": {
+          "session_id": "23dcd336-42a8-4e5d-8b6f-565031b65cdf",
+          "transcript_path": "/Users/xenonbomin54/.claude/projects/-Users-xenonbomin54-----/23dcd336-42a8-4e5d-8b6f-565031b65cdf.jsonl",
+          "cwd": "/Users/xenonbomin54/나라장터",
+          "prompt_id": "d06d483d-0e4a-48d5-8358-0ef02c456202",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "23dcd336-42a8-4e5d-8b6f-565031b65cdf",
+          "ended_at": "2026-09-07T10:14:58.452Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 9000,
+      "claimedAt": "2026-09-07T10:14:58.839Z",
+      "runner": {
+        "attempt": 1,
+        "runnerNonce": "a4a68340-1d6f-4cf1-a97c-024ee1f55aff",
+        "phase": "terminal",
+        "deadlineAt": "2026-09-07T10:15:08.516Z"
+      },
+      "lastOutcomeCode": "completed",
+      "completedAt": "2026-09-07T10:14:58.950Z"
+    },
+    "callback": {
+      "class": "best-effort",
+      "phase": "deferred-best-effort",
+      "status": "completed",
+      "attempts": 1,
+      "idempotencyKey": "d068ede2655bf89e0c0950e087d0603d7dcf45538e94f20a654d08c6f4841895",
+      "payload": {
+        "transcriptPath": "/Users/xenonbomin54/.claude/projects/-Users-xenonbomin54-----/23dcd336-42a8-4e5d-8b6f-565031b65cdf.jsonl",
+        "cwd": "/Users/xenonbomin54/나라장터",
+        "reason": "other",
+        "input": {
+          "session_id": "23dcd336-42a8-4e5d-8b6f-565031b65cdf",
+          "transcript_path": "/Users/xenonbomin54/.claude/projects/-Users-xenonbomin54-----/23dcd336-42a8-4e5d-8b6f-565031b65cdf.jsonl",
+          "cwd": "/Users/xenonbomin54/나라장터",
+          "prompt_id": "d06d483d-0e4a-48d5-8358-0ef02c456202",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "23dcd336-42a8-4e5d-8b6f-565031b65cdf",
+          "ended_at": "2026-09-07T10:14:58.452Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 2000,
+      "claimedAt": "2026-09-07T10:14:58.966Z",
+      "runner": {
+        "attempt": 1,
+        "runnerNonce": "b22eca11-d2bf-417d-8ec1-e4c0922bf7cd",
+        "phase": "terminal",
+        "deadlineAt": "2026-09-07T10:15:08.516Z"
+      },
+      "lastOutcomeCode": "completed",
+      "completedAt": "2026-09-07T10:14:59.064Z"
+    },
+    "notification": {
+      "class": "best-effort",
+      "phase": "deferred-best-effort",
+      "status": "completed",
+      "attempts": 1,
+      "idempotencyKey": "89c0438ff63097ce04beb60efb87292ff68a7af350a0ee331f3de9dbf42d62fc",
+      "payload": {
+        "transcriptPath": "/Users/xenonbomin54/.claude/projects/-Users-xenonbomin54-----/23dcd336-42a8-4e5d-8b6f-565031b65cdf.jsonl",
+        "cwd": "/Users/xenonbomin54/나라장터",
+        "reason": "other",
+        "input": {
+          "session_id": "23dcd336-42a8-4e5d-8b6f-565031b65cdf",
+          "transcript_path": "/Users/xenonbomin54/.claude/projects/-Users-xenonbomin54-----/23dcd336-42a8-4e5d-8b6f-565031b65cdf.jsonl",
+          "cwd": "/Users/xenonbomin54/나라장터",
+          "prompt_id": "d06d483d-0e4a-48d5-8358-0ef02c456202",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "23dcd336-42a8-4e5d-8b6f-565031b65cdf",
+          "ended_at": "2026-09-07T10:14:58.452Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 2000,
+      "claimedAt": "2026-09-07T10:14:59.080Z",
+      "runner": {
+        "attempt": 1,
+        "runnerNonce": "c6e7d694-d401-4827-9361-5594a6655f4c",
+        "phase": "terminal",
+        "deadlineAt": "2026-09-07T10:15:08.516Z"
+      },
+      "lastOutcomeCode": "completed",
+      "completedAt": "2026-09-07T10:14:59.182Z"
+    },
+    "openclaw": {
+      "class": "best-effort",
+      "phase": "deferred-best-effort",
+      "status": "completed",
+      "attempts": 1,
+      "idempotencyKey": "31fe8f6e1cf204e27006de511df257326fdd98655122ca437013e8779ffc735b",
+      "payload": {
+        "transcriptPath": "/Users/xenonbomin54/.claude/projects/-Users-xenonbomin54-----/23dcd336-42a8-4e5d-8b6f-565031b65cdf.jsonl",
+        "cwd": "/Users/xenonbomin54/나라장터",
+        "reason": "other",
+        "input": {
+          "session_id": "23dcd336-42a8-4e5d-8b6f-565031b65cdf",
+          "transcript_path": "/Users/xenonbomin54/.claude/projects/-Users-xenonbomin54-----/23dcd336-42a8-4e5d-8b6f-565031b65cdf.jsonl",
+          "cwd": "/Users/xenonbomin54/나라장터",
+          "prompt_id": "d06d483d-0e4a-48d5-8358-0ef02c456202",
+          "hook_event_name": "SessionEnd",
+          "reason": "other"
+        },
+        "metrics": {
+          "session_id": "23dcd336-42a8-4e5d-8b6f-565031b65cdf",
+          "ended_at": "2026-09-07T10:14:58.452Z",
+          "reason": "other",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 2000,
+      "claimedAt": "2026-09-07T10:14:59.199Z",
+      "runner": {
+        "attempt": 1,
+        "runnerNonce": "7fadc977-2e82-4b0b-b0ca-bd473e117dda",
+        "phase": "terminal",
+        "deadlineAt": "2026-09-07T10:15:08.516Z"
+      },
+      "lastOutcomeCode": "completed",
+      "completedAt": "2026-09-07T10:14:59.306Z"
+    }
+  },
+  "owner": null,
+  "phase": "complete",
+  "completion": {
+    "completedAt": "2026-09-07T10:14:59.321Z",
+    "terminalDigest": "59bbca09ce8054b02339022dde5fb0afb1abff9997442dc9f5f87e821f095071",
+    "terminalRevision": 40
+  }
+}

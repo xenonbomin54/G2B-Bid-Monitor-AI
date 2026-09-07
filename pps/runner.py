@@ -144,6 +144,7 @@ class ApiRunner:
         self.cache_dir = os.environ.get("PPS_API_CACHE", ".cache/api")
         self.cache_hits = 0
         self.cache_misses = 0
+        self.truncated_retries = 0
         if self.cache_dir:
             os.makedirs(self.cache_dir, exist_ok=True)
         if not self.base_url or not self.api_key:
@@ -170,6 +171,22 @@ class ApiRunner:
             return AutoTokenizer.from_pretrained(path)
         except Exception:
             return False
+
+    @staticmethod
+    def _looks_truncated(text: str) -> bool:
+        """200 응답인데 본문이 중간에서 끊긴 것으로 보이는가 (연결 끊김).
+
+        보수적으로만 참을 낸다 — JSON 으로 시작하고, 파싱이 안 되고, 짧을 때.
+        관측된 정상 응답은 최대 580자였고 절단 조각은 전부 200자 미만이었다.
+        """
+        s = (text or "").strip()
+        if not s.startswith("{") or len(s) >= 200:
+            return False
+        try:
+            json.loads(s)
+        except Exception:                                    # noqa: BLE001
+            return True
+        return False
 
     # ---- 호출 -----------------------------------------------------------
     def _cache_key(self, messages: Messages, cfg: GenConfig) -> str:
@@ -241,10 +258,26 @@ class ApiRunner:
             method="POST",
         )
         self.limiter.acquire()
-        try:
+        try:  # noqa: PLR1702
             with urllib.request.urlopen(req, timeout=180) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
             text = data["choices"][0]["message"]["content"] or ""
+            # 200 을 받았지만 본문이 중간에서 끊긴 경우를 재시도한다.
+            #
+            # 왜: `.cache/api` 1,200건을 열어 보니 119건(9.9%)이 '{\n  "v12":' 처럼
+            #     1~9자에서 끊겨 있었다. 정상 응답은 최대 580자였으므로 토큰 상한이
+            #     아니라 **연결 끊김**이다. 이 조각은 파싱 실패 → 그 그룹 전 항목이 0 이
+            #     되어 dev 측정에 결손 392칸(8.2%)을 만들었다. 즉 우리 dev 점수는
+            #     실제보다 낮게 나오고 있었고, '그룹 전체 침묵'의 일부가 이것이었다.
+            #
+            # 절단 판정은 보수적으로 한다 — JSON 으로 시작하는데 파싱이 안 되고
+            # 길이도 짧을 때만. 코드펜스·설명문이 섞인 정상 출력은 pipeline 의
+            # extract_json 이 처리하므로 여기서 건드리지 않는다.
+            # 재시도해도 안 되면 그대로 넘긴다(빈 문자열보다 조각이라도 낫다).
+            if self._looks_truncated(text) and attempt < 5:
+                time.sleep(min(30, (2 ** attempt) + random.random()))
+                self.truncated_retries += 1
+                return self._one(messages, cfg, attempt + 1)
             self._cache_put(self._cache_key(messages, cfg), text)
             return text
         except urllib.error.HTTPError as e:

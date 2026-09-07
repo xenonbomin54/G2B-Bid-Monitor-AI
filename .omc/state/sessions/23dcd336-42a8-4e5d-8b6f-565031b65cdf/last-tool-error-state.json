@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"git stash pop\",\"description\":\"Pop stash\"}",
-  "error": "Exit code 1\nerror: Your local changes to the following files would be overwritten by merge:\n\t.omc/project-memory.json\n\t.omc/state/session-end-jobs/discovery.json\nPlease commit your changes or stash them before you merge.\nAborting\nOn branch main\nYour branch is up to date with 'origin/main'.\n\nChanges not staged for commit:\n  (use \"git add/rm <file>...\" to update what will be committed)\n  (use \"git restore <file>...\" to discard changes in working directory)\n\tmodified:   .omc/project-memory.json\n\tde...",
-  "timestamp": "2026-09-07T04:31:11.897Z",
+  "tool_input_preview": "{\"command\":\"python3 build_submit.py --smoke\",\"description\":\"Final build and smoke test\"}",
+  "error": "Exit code 1\n❌ 제출물에 'ApiRunner' 이 남아 있다 (외부 API 러너). 중단한다.\n   해당 코드는 runner.py 의 DEV ONLY 마커 안에 두어야 한다.",
+  "timestamp": "2026-09-07T11:35:32.415Z",
   "retry_count": 1
 }
