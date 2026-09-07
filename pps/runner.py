@@ -310,7 +310,7 @@ class VllmRunner:
     """
 
     name = "vllm"
-
+    per_request_schema = True
     def __init__(
         self,
         model_dir: Optional[str] = None,
@@ -352,17 +352,31 @@ class VllmRunner:
             return len(self.tok.encode("\n".join(m["content"] for m in messages)))
 
     def generate(self, batch: List[Messages], cfg: GenConfig) -> List[str]:
+        return self.generate_mixed(batch, [cfg] * len(batch))
+
+    def generate_mixed(self, batch: List[Messages], cfgs: List[GenConfig],
+                       on_done=None) -> List[str]:
+        # 요청별 SamplingParams로 서로 다른 스키마도 한 연속 배치에 넣는다.
         from vllm import SamplingParams
         from vllm.sampling_params import StructuredOutputsParams
-
-        sp_kw: Dict[str, Any] = dict(
-            temperature=cfg.temperature, max_tokens=cfg.max_tokens, seed=cfg.seed)
-        if cfg.schema is not None:
-            sp_kw["structured_outputs"] = StructuredOutputsParams(
-                json=cfg.schema, disable_any_whitespace=True)
-        sp = SamplingParams(**sp_kw)
-        outs = self.llm.chat(batch, sampling_params=sp, use_tqdm=False)
-        return [o.outputs[0].text if o.outputs else "" for o in outs]
+        if len(batch) != len(cfgs):
+            raise ValueError("메시지와 생성 설정 개수가 다릅니다")
+        if not batch:
+            return []
+        params = []
+        for cfg in cfgs:
+            kw: Dict[str, Any] = dict(
+                temperature=cfg.temperature, max_tokens=cfg.max_tokens, seed=cfg.seed)
+            if cfg.schema is not None:
+                kw["structured_outputs"] = StructuredOutputsParams(
+                    json=cfg.schema, disable_any_whitespace=True)
+            params.append(SamplingParams(**kw))
+        outs = self.llm.chat(batch, sampling_params=params, use_tqdm=False)
+        texts = [o.outputs[0].text if o.outputs else "" for o in outs]
+        if on_done:
+            for i in range(len(texts)):
+                on_done(i)
+        return texts
 
 
 # --------------------------------------------------------------------------- 팩토리
@@ -396,3 +410,24 @@ def run_with_fallback(runner, batch: List[Messages], cfg: GenConfig) -> List[str
             print(f"  ! 건 단위 실패 → 빈 출력: {type(e).__name__}: {str(e)[:160]}")
             out.append("")
     return out
+
+
+def run_mixed_with_fallback(runner, batch: List[Messages],
+                            cfgs: List[GenConfig]) -> List[str]:
+    # 혼합 배치 실패 시 이분할: 정상 요청의 배칭을 유지하면서 실패 건 격리."
+    if len(batch) != len(cfgs):
+        raise ValueError("메시지와 생성 설정 개수가 다릅니다")
+    if not batch:
+        return []
+    try:
+        out = runner.generate_mixed(batch, cfgs)
+        if len(out) != len(batch):
+            raise ValueError("러너 응답 개수가 요청 개수와 다릅니다")
+        return out
+    except Exception as exc:
+        print(f"  ! 혼합 배치({len(batch)}건) 실패: {type(exc).__name__}")
+        if len(batch) == 1:
+            return [""]
+        mid = len(batch) // 2
+        return (run_mixed_with_fallback(runner, batch[:mid], cfgs[:mid])
+                + run_mixed_with_fallback(runner, batch[mid:], cfgs[mid:]))

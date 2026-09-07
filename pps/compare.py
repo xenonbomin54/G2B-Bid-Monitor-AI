@@ -16,6 +16,7 @@ from __future__ import annotations
 import re
 from typing import Dict, List, Optional, Tuple
 
+from . import law
 from .records import Record
 
 # --------------------------------------------------------------------------- 금액
@@ -141,6 +142,91 @@ def region_check(rec: Record) -> str:
     if hit:
         parts.append(f"본문 소재지 제한 문맥에 시·군·구 단위 표기가 보임(단서, 확인 필요): …{hit}…")
     return " / ".join(parts)
+
+
+# --------------------------------------------------------------------------- 공동수급 지분율 (v21)
+
+# "최소 지분율 3% 이상" / "지분율은 100분의 5 이상" / "출자비율 5%" / "지분참여 비율 10% 이상"
+_지분율 = re.compile(
+    r"(?:최소\s*)?(?:지분\s*율|지분\s*비율|지분\s*참여\s*비율|출자\s*비율|지분)"
+    r"\s*(?:은|는|이|가|을|를)?\s*[^\n%]{0,30}?"
+    r"(?:(\d{1,3}(?:\.\d+)?)\s*%|100\s*분의\s*(\d{1,3}))")
+_공동 = re.compile(r"공동\s*(?:수급|계약|도급|이행)|공동수급체|공동협정서")
+_분담이행 = re.compile(r"분담\s*이행")
+
+
+def joint_shares(text: str) -> List[Tuple[str, float]]:
+    """본문에서 (인용구, 백분율) 목록. 판단하지 않고 후보만 모은다.
+
+    ⚠️ '지분율 평가 배점 10%' 처럼 자격과 무관한 표기도 걸린다.
+    그래서 값만 주지 않고 **인용구를 함께** 준다 — 판단은 모델이 한다.
+    (STATUS.md 원칙 3: 정규식으로 의미 매칭을 흉내내지 않는다.)
+    """
+    out: List[Tuple[str, float]] = []
+    seen = set()
+    for m in _지분율.finditer(text):
+        raw = m.group(1) or m.group(2)
+        if raw is None:
+            continue
+        try:
+            pct = float(raw)
+        except ValueError:
+            continue
+        if not 0 < pct <= 100:
+            continue
+        quote = re.sub(r"\s+", " ",
+                       text[max(0, m.start() - 60): m.end() + 30]).strip()
+        key = quote[:40]
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((quote, pct))
+    return out
+
+
+def joint_share_check(rec: Record) -> str:
+    """공동수급체 최소지분율의 법정 하한을 계산해 사실로 준다 (v21).
+
+    왜 계산해서 주는가
+      모델은 v21 판정 기준("법정 하한보다 낮으면 위반")은 받지만 **하한값 자체를
+      모른다.** 지방 5% / 국가 10% 이고 각각 20% 범위에서 가감할 수 있어
+      실효 하한이 4% / 8% 다. 이건 조문에서 계산되는 값이므로 코드가 준다.
+      (fact_block 이 금액 구간·지역제한 허용여부를 계산해 주는 것과 같은 이유)
+
+    강제하지 않는 이유
+      dev 200건에서 v21 양성 6건 중 **근거문구가 있는 것은 1건뿐**이다
+      (PPS-DEV-25 "최소 지분율 3% 이상"). 나머지 5건은 정답 근거가 빈칸이어서
+      위반의 형태를 아직 규명하지 못했다. 규칙이 6건 중 1건만 설명하는 상태로
+      강제하면 나머지를 0 으로 덮어써 재현율을 잃는다.
+      → 사실만 제공한다. 규칙 강제는 v23(규칙 F1 0.909 vs LLM 0.000)처럼
+        규칙이 LLM 보다 확실히 나을 때만 한다.
+    """
+    하한 = law.공동_최소지분율_하한(rec.적용계약법, rec.업무구분, rec.추정가격)
+    기준 = (law.공동_최소지분율_지방 if rec.is_지방
+            else law.공동_최소지분율_국가)
+    parts = [f"법정 최소지분율 {기준:.0f}% "
+             f"({rec.적용계약법}), 20% 범위 가감 허용 → 실효 하한 {하한:.0f}% 미만이면 위반"]
+
+    방식 = str(rec.meta.get("공동도급구성방식") or "").strip()
+    if 방식:
+        parts.append(f"등록 공동도급구성방식={방식}")
+
+    t = rec.full_text
+    if not _공동.search(t) and not 방식:
+        parts.append("본문에 공동수급 언급 없음")
+    if _분담이행.search(t):
+        parts.append("본문에 '분담이행' 표기 있음 — 분담이행방식에는 최소지분율이 적용되지 않는다")
+
+    found = joint_shares(t)
+    if not found:
+        parts.append("본문에서 지분율 수치를 찾지 못했다(표기가 없거나 형식이 달라서일 수 있다)")
+    else:
+        lo = min(p for _, p in found)
+        판정 = "하한 미달" if lo < 하한 else "하한 이상"
+        parts.append(f"본문 지분율 표기 최소값 {lo:g}% → {판정}")
+        for quote, pct in found[:3]:
+            parts.append(f"  · {pct:g}% ← …{quote[:150]}…")
+    return " / ".join(parts[:2]) + ("\n  " + "\n  ".join(parts[2:]) if parts[2:] else "")
 
 
 # --------------------------------------------------------------------------- 조항호 해석

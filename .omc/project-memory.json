@@ -105,27 +105,33 @@
   },
   "hotPaths": [
     {
-      "path": "pps/gating.py",
-      "accessCount": 5,
-      "lastAccessed": 1788705990959,
-      "type": "file"
-    },
-    {
       "path": "STATUS.md",
-      "accessCount": 4,
-      "lastAccessed": 1788707298272,
+      "accessCount": 15,
+      "lastAccessed": 1788762318285,
       "type": "file"
     },
     {
       "path": "pps/prompts.py",
-      "accessCount": 2,
-      "lastAccessed": 1788693247868,
+      "accessCount": 12,
+      "lastAccessed": 1788762100239,
+      "type": "file"
+    },
+    {
+      "path": "pps/gating.py",
+      "accessCount": 10,
+      "lastAccessed": 1788755585910,
       "type": "file"
     },
     {
       "path": "pps/pipeline.py",
-      "accessCount": 2,
-      "lastAccessed": 1788693396906,
+      "accessCount": 5,
+      "lastAccessed": 1788755601732,
+      "type": "file"
+    },
+    {
+      "path": "pps/compare.py",
+      "accessCount": 4,
+      "lastAccessed": 1788762076793,
       "type": "file"
     },
     {
@@ -138,6 +144,12 @@
       "path": "tools/calibrate.py",
       "accessCount": 2,
       "lastAccessed": 1788701949709,
+      "type": "file"
+    },
+    {
+      "path": "pps/law.py",
+      "accessCount": 2,
+      "lastAccessed": 1788755792709,
       "type": "file"
     },
     {
@@ -162,6 +174,12 @@
       "path": "pps/presence.py",
       "accessCount": 1,
       "lastAccessed": 1788702149568,
+      "type": "file"
+    },
+    {
+      "path": "tools/probe_v21.py",
+      "accessCount": 1,
+      "lastAccessed": 1788755764544,
       "type": "file"
     }
   ],

@@ -454,12 +454,16 @@ class Pipeline:
         지금은 v23 뿐이다 — dev 41건(협상+지방)에서 규칙 F1 0.909 vs LLM 0.000.
         """
         scans = presence.scan_record(rec)
-        size = presence.size_restrictions(rec.full_text)
         hints: Dict[str, int] = {}
-        if scans["v10"].present:
-            hints["v10"] = 0                       # 직접생산확인 요구가 있다
-        if size["중소기업"].present:
-            hints["v11"] = 0                       # 중소기업자로 제한했다
+
+        # ⚠️ v10·v11 의 "문구가 있으면 0" 강제는 제거했다 (2026-09-07 감사).
+        #    dev 200건에서 v10 진짜 양성 7건 중 4건, v11 6건 중 2건을 이 규칙이 죽였다.
+        #    '직접생산'은 계약조건 상투문구("계약상대자가 직접생산 확인기준을 위반한
+        #    사실을 확인한 경우…")와 법령 인용에 늘 등장해 133/200건에 걸린다.
+        #    문구의 존재 ≠ 참가자격 요구. 존재 여부는 프롬프트 입력(full_doc)으로
+        #    LLM 이 이미 보고 있으므로 규칙으로 덮어쓸 이유가 없다.
+        #    부재탐지 = 정규식이 낫다는 원칙은 "문구가 정형적일 때"만 성립한다(v20 처럼).
+
         if scans["v20"].present:
             hints["v20"] = 0                       # 대기업 참여제한을 명시했다
         if not scans["_SW사업"].present:

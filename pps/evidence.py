@@ -48,10 +48,13 @@ def _longest_common_substring(a: str, b: str, min_len: int = 12) -> Optional[str
         return None
 
     def has(n: int) -> Optional[str]:
-        seen = {a[i:i + n] for i in range(len(a) - n + 1)}
+        # b는 짧은 인용문, a는 수만 자 원문이다. 원문의 모든 부분문자열을
+        # Python set으로 만들지 않고 C 구현의 문자열 검색을 사용한다.
+        # b의 앞쪽 후보부터 검사하므로 동률 선택도 기존 구현과 같다.
         for i in range(len(b) - n + 1):
-            if b[i:i + n] in seen:
-                return b[i:i + n]
+            candidate = b[i:i + n]
+            if candidate in a:
+                return candidate
         return None
 
     lo, hi, best = min_len, min(len(a), len(b)), None
