@@ -19,8 +19,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from pps import grades as gradeio  # noqa: E402
 from pps import prompts, pumnum, scoring, submission  # noqa: E402
-from pps.pipeline import Pipeline  # noqa: E402
+from pps.pipeline import GRADE_THRESHOLD_DEFAULT, Pipeline  # noqa: E402
 from pps.records import ITEMS, load_item_table, load_records  # noqa: E402
 from pps.runner import make_runner  # noqa: E402
 
@@ -39,6 +40,13 @@ def main() -> int:
                     help="2단계 검증 — 1로 판정된 칸을 재질의해 과잉 판정을 걷어낸다")
     ap.add_argument("--data", default=os.path.join(OPEN, "dev.jsonl.gz"))
     ap.add_argument("--labels", default=os.path.join(OPEN, "dev_labels.csv"))
+    ap.add_argument("--graded", action="store_true",
+                    help="LLM 에 위반등급(0~3)을 요구한다. 저장해 두면 "
+                         "tools/sweep_threshold.py 로 API 없이 문턱을 스윕할 수 있다.")
+    ap.add_argument("--grade-threshold", type=int, default=GRADE_THRESHOLD_DEFAULT,
+                    help=f"등급 ≥ 이 값이면 위반 (기본 {GRADE_THRESHOLD_DEFAULT})")
+    ap.add_argument("--save-grades", default=None,
+                    help="LLM 원본 등급을 JSON 으로 저장한다 (문턱 스윕용)")
     args = ap.parse_args()
 
     recs = load_records(args.data, limit=args.limit)
@@ -48,12 +56,28 @@ def main() -> int:
     gosi = pumnum.load_gosi(os.path.join(OPEN, "data"))
 
     print(f"레코드 {len(recs)}건 · 러너 {args.runner}"
-          f"{' · 규칙결합 OFF' if args.no_rules else ''}")
+          f"{' · 규칙결합 OFF' if args.no_rules else ''}"
+          f"{' · 등급모드(0~3)' if args.graded else ''}"
+          f" · 문턱 {args.grade_threshold}")
 
     runner = make_runner(args.runner, items=ITEMS)
-    pipe = Pipeline(runner, tbl, gosi=gosi, use_rules=not args.no_rules)
+    pipe = Pipeline(runner, tbl, gosi=gosi, use_rules=not args.no_rules,
+                    graded=args.graded, grade_threshold=args.grade_threshold)
 
     judged = pipe.run(recs, chunk=args.chunk)
+
+    # LLM 원본 등급을 먼저 저장한다 — 이후 문턱 스윕은 API 없이 이 파일로 한다.
+    if args.save_grades:
+        gradeio.save(args.save_grades, judged, meta={
+            "판정모드": "graded" if args.graded else "binary",
+            "문턱": args.grade_threshold,
+            "러너": args.runner,
+            "데이터": os.path.basename(args.data),
+            "시드": pipe.seed,
+            "max_tokens": pipe.max_tokens,
+        })
+        dist = gradeio.distribution(judged)
+        print(f"  원본 등급 저장 {args.save_grades} · 등급분포 {dist}")
 
     dropped = {}
     if args.verify:

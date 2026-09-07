@@ -126,19 +126,40 @@ GROUP_OF: Dict[str, Group] = {i: g for g in GROUPS for i in g.items}
 
 # --------------------------------------------------------------------------- 스키마
 
-def build_schema(items: Sequence[str]) -> Dict[str, Any]:
+# --------------------------------------------------------------------------- 위반등급
+# 이진 0/1 은 판정 문턱을 모델 안에 숨긴다 — 문턱을 바꿔 보려면 매번 다시 호출해야 한다.
+# 등급으로 받으면 **한 번 호출한 뒤 로컬에서 문턱만 바꿔** 정밀도·재현율을 견줄 수 있다.
+# 등급은 LLM 의 원본 출력이고, 최종 0/1 은 pipeline.finalize 가 문턱을 적용해 만든다.
+GRADE_MIN, GRADE_MAX = 0, 3
+GRADE_KEY = "위반등급"
+BINARY_KEY = "위반여부"
+
+GRADE_GUIDE = """
+판정을 0/1 이 아니라 **위반등급 0~3** 으로 낸다. 등급의 뜻은 다음과 같다.
+- 3 = 명백한 위반. 근거 문구가 위반을 직접 보여준다.
+- 2 = 위반으로 보인다. 근거 문구를 지목할 수 있다.
+- 1 = 의심. 관련 문구는 있으나 위반이라 단정하기 어렵다.
+- 0 = 위반 아님. 관련 문구가 없거나, 법이 허용하는 범위 안이다.
+1 이상이면 근거문구를 함께 낸다(부재탐지 항목은 null). 0 이면 근거문구는 null 이다.
+등급을 매길 때 문턱을 스스로 정하지 마라 — 확신의 정도를 그대로 등급으로 표현하면 된다."""
+
+
+def build_schema(items: Sequence[str], graded: bool = False) -> Dict[str, Any]:
     """제약 디코딩용 JSON Schema. 요청한 항목만 포함한다.
 
     부재탐지 항목은 근거문구를 null 로 고정한다 — 인용할 원문이 없다.
+    graded=True 면 `위반여부 0|1` 대신 `위반등급 0~3` 을 받는다.
     """
+    key = GRADE_KEY if graded else BINARY_KEY
+    enum = list(range(GRADE_MIN, GRADE_MAX + 1)) if graded else [0, 1]
     props: Dict[str, Any] = {}
     for v in items:
         props[v] = {
             "type": "object",
             "additionalProperties": False,
-            "required": ["위반여부", "근거문구"],
+            "required": [key, "근거문구"],
             "properties": {
-                "위반여부": {"type": "integer", "enum": [0, 1]},
+                key: {"type": "integer", "enum": enum},
                 "근거문구": ({"type": "null"} if v in ABSENCE
                           else {"type": ["string", "null"], "maxLength": 600}),
             },
@@ -341,8 +362,12 @@ def build_messages(
     gosi: Optional[pumnum.Gosi] = None,
     law_text: str = "",
     budget: Optional[int] = None,
+    graded: bool = False,
 ) -> List[Dict[str, str]]:
-    """한 그룹에 대한 대화 메시지."""
+    """한 그룹에 대한 대화 메시지.
+
+    graded=True 면 위반여부(0/1) 대신 위반등급(0~3)을 요구한다 — §위반등급 참조.
+    """
     b = budget if budget is not None else group.budget
 
     if group.full_doc:
@@ -375,10 +400,14 @@ def build_messages(
                      + _safe("공동지분율", lambda: compare.joint_share_check(rec)))
 
     parts.append(f"\n[공고 문서]\n{doc}")
-    parts.append(
-        "\n위 항목 각각에 대해 위반여부(0 또는 1)와 근거문구를 JSON으로 내라.")
+    if graded:
+        parts.append(
+            f"\n위 항목 각각에 대해 {GRADE_KEY}(0~3)와 근거문구를 JSON으로 내라.")
+    else:
+        parts.append(
+            "\n위 항목 각각에 대해 위반여부(0 또는 1)와 근거문구를 JSON으로 내라.")
 
     return [
-        {"role": "system", "content": SYSTEM},
+        {"role": "system", "content": SYSTEM + (GRADE_GUIDE if graded else "")},
         {"role": "user", "content": "\n".join(parts)},
     ]

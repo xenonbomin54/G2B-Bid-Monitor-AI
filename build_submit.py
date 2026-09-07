@@ -36,7 +36,7 @@ PKG = os.path.join(ROOT, "pps")
 # 의존 순서 (앞이 먼저 로드된다)
 MODULES = [
     "law", "records", "evidence", "presence", "pumnum", "gosimatch", "compare", "spec", "schedule",
-    "sections", "gating", "prompts", "runner", "pipeline", "submission",
+    "sections", "gating", "prompts", "grades", "runner", "pipeline", "submission",
 ]
 
 DEV_BLOCK = re.compile(
@@ -113,6 +113,12 @@ def main(argv=None) -> int:
     # 상한에 닿은 적이 없다. 자세한 근거는 pps/pipeline.py 의 max_tokens 주석 참조.
     ap.add_argument("--max-tokens", type=int, default=1200)
     ap.add_argument("--quant", default="int8_per_channel_weight_only")
+    ap.add_argument("--graded", action="store_true",
+                    help="LLM 에 위반등급(0~3)을 요구한다. 기본 꺼짐 — 평가 서버는 "
+                         "인자 없이 실행하므로 기존 이진 판정 그대로 간다.")
+    ap.add_argument("--grade-threshold", type=int, default=None,
+                    help="등급 ≥ 이 값이면 위반. 기본값은 pps/pipeline.py 의 "
+                         "GRADE_THRESHOLD_DEFAULT 하나로 관리한다.")
     ap.add_argument("--verify", action="store_true",
                     help="2단계 검증 — dev200 측정에서 상한을 0.484→0.421 로 깎았다. "
                          "취소 80건 중 진짜양성이 28건이라 재현율 손실이 크다. 기본 비활성.")
@@ -165,10 +171,15 @@ def main(argv=None) -> int:
         log(f"모델 로드 {runner.load_seconds:.0f}s")
 
     # 모델 로드에 쓴 시간을 빼고 남은 예산을 추론에 배정한다.
+    # grade_threshold 를 넘기지 않으면 Pipeline 기본값(GRADE_THRESHOLD_DEFAULT)을 쓴다
+    # — 문턱을 한 곳에서만 관리하기 위한 것이다.
+    _th = {} if args.grade_threshold is None else {"grade_threshold": args.grade_threshold}
     pipe = Pipeline(runner, tbl, gosi=gosi,
                     max_tokens=args.max_tokens,
                     prompt_budget=args.max_model_len - args.max_tokens,
-                    deadline=_t_start + args.time_budget)
+                    deadline=_t_start + args.time_budget,
+                    graded=args.graded, **_th)
+    log(f"판정모드 {'등급(0~3)' if args.graded else '이진(0/1)'} · 문턱 {pipe.grade_threshold}")
     log(f"추론 시간예산 {args.time_budget - (time.monotonic() - _t_start):.0f}s 남음")
 
     try:

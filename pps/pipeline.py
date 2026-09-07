@@ -14,6 +14,22 @@ from .runner import GenConfig, run_with_fallback
 
 _FENCE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.S)
 
+# --------------------------------------------------------------------------- 판정 문턱
+# **문턱은 이 한 값으로만 관리한다.** Pipeline 이 기본값으로 쓰고,
+# tools/evaluate.py · build_submit.py 는 넘기지 않으면 이 값을 그대로 받는다.
+#
+# 위반등급(0~3) 이 이 값 이상이면 최종 1 이다.
+# 1 이면 '의심'까지 위반으로 본다(재현율 우선), 3 이면 '명백'만 본다(정밀도 우선).
+# 이진 모드에서는 1 → 3, 0 → 0 으로 담기므로 1~3 어디서나 기존 판정이 재현된다.
+#
+# ⚠️ 실측 없이 기본값을 바꾸지 말 것. `python3 tools/sweep_threshold.py` 로
+#    저장된 등급을 재채점해 항목별 P/R/F1 을 보고 정한다.
+GRADE_THRESHOLD_DEFAULT = 2
+
+# 문턱이 가질 수 있는 값의 범위. 0 은 모든 칸을 위반으로 만들어 의미가 없다.
+GRADE_MIN_TH = 1
+GRADE_MAX_TH = prompts.GRADE_MAX
+
 
 # --------------------------------------------------------------------------- 파싱
 
@@ -75,32 +91,79 @@ def _as01(x: Any) -> int:
     return 0
 
 
-def parse_group(text: str, items: Sequence[str]) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
-    """모델 출력 → {항목: {위반여부, 근거문구}}. 빠진 항목은 0/None 으로 채운다."""
+def _as_grade(x: Any, binary: bool) -> int:
+    """모델이 낸 값을 위반등급 0~3 으로 읽는다.
+
+    binary=True (위반여부 0/1 로 받은 값)
+      1 → GRADE_MAX, 0 → 0 으로 **끝값에 붙인다.**
+      ⚠️ 여기서 1 을 등급 1 로 담으면 기본 문턱 2 에서 전부 0 이 되어
+         이진 모드가 통째로 망가진다. 어떤 문턱(1~3)에서도 원래 판정이
+         그대로 재현되어야 한다 — 회귀 안전의 핵심이다.
+
+    binary=False (위반등급 0~3 으로 받은 값)
+      범위를 벗어나면 0~3 으로 잘라 맞춘다.
+    """
+    if binary:
+        return prompts.GRADE_MAX if _as01(x) else 0
+    if isinstance(x, bool):
+        return prompts.GRADE_MAX if x else 0
+    if isinstance(x, (int, float)):
+        return max(prompts.GRADE_MIN, min(prompts.GRADE_MAX, int(x)))
+    if isinstance(x, str):
+        s = x.strip()
+        if s.isdigit():
+            return max(prompts.GRADE_MIN, min(prompts.GRADE_MAX, int(s)))
+        return prompts.GRADE_MAX if _as01(s) else 0
+    return 0
+
+
+def parse_group(text: str, items: Sequence[str],
+                graded: bool = False) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
+    """모델 출력 → {항목: {위반등급, 근거문구}}. 빠진 항목은 0/None 으로 채운다.
+
+    **여기서는 최종 0/1 을 만들지 않는다.** LLM 원본 등급을 그대로 보존하고,
+    문턱 적용은 `Pipeline.finalize` 가 한다 — 그래야 한 번 호출한 결과로
+    문턱만 바꿔 가며 재채점할 수 있다(tools/sweep_threshold.py).
+
+    이진 모드(graded=False)에서는 1 → GRADE_MAX, 0 → 0 으로 올려 담는다.
+    따라서 문턱 1~3 어디서도 기존 판정이 그대로 재현된다(회귀 안전).
+    """
     obj = extract_json(text)
     if isinstance(obj, dict) and isinstance(obj.get("판정"), dict):
         obj = obj["판정"]
+    key = prompts.GRADE_KEY if graded else prompts.BINARY_KEY
     out: Dict[str, Dict[str, Any]] = {}
     missing: List[str] = []
     for v in items:
         raw = obj.get(v) if isinstance(obj, dict) else None
 
         # 제약 디코딩이 없는 환경(로컬 검증 등)에서는 모델이 축약형을 낸다:
-        #   {"v10": 0}  또는  {"v10": "0"}  대신  {"v10": {"위반여부": 0, "근거문구": null}}
+        #   {"v10": 0}  또는  {"v10": "0"}  대신  {"v10": {...}}
         # 형식이 다르다고 버리면 그룹 전체가 0이 되므로 값만 받아 살린다.
         if isinstance(raw, (int, float, bool, str)):
-            out[v] = {"위반여부": _as01(raw), "근거문구": None}
+            out[v] = {prompts.GRADE_KEY: _as_grade(raw, binary=not graded),
+                      "근거문구": None}
             continue
 
         if not isinstance(raw, dict):
             missing.append(v)
-            out[v] = {"위반여부": 0, "근거문구": None}
+            out[v] = {prompts.GRADE_KEY: 0, "근거문구": None}
             continue
         ev = raw.get("근거문구", raw.get("evidence"))
         if ev is not None and not isinstance(ev, str):
             ev = str(ev)
-        out[v] = {"위반여부": _as01(raw.get("위반여부", raw.get("violation", 0))),
-                  "근거문구": ev}
+        # 요청한 키가 없으면 다른 키도 받아 본다 — 모델이 모드를 헷갈릴 수 있다.
+        # **값을 어느 키에서 얻었는지가 해석을 정한다** — 위반여부에서 온 1 은
+        # 등급 1 이 아니라 GRADE_MAX 다.
+        if key in raw:
+            val, binary = raw[key], (key == prompts.BINARY_KEY)
+        else:
+            other = prompts.BINARY_KEY if graded else prompts.GRADE_KEY
+            if other in raw:
+                val, binary = raw[other], (other == prompts.BINARY_KEY)
+            else:
+                val, binary = raw.get("violation", 0), True
+        out[v] = {prompts.GRADE_KEY: _as_grade(val, binary=binary), "근거문구": ev}
     return out, missing
 
 
@@ -191,6 +254,8 @@ class Pipeline:
         seed: int = 20260826,
         use_rules: bool = True,
         deadline: Optional[float] = None,
+        graded: bool = False,
+        grade_threshold: int = GRADE_THRESHOLD_DEFAULT,
     ):
         self.runner = runner
         self.tbl = item_table
@@ -200,6 +265,11 @@ class Pipeline:
         self.prompt_budget = prompt_budget
         self.seed = seed
         self.use_rules = use_rules
+        # graded: LLM 에 위반등급(0~3)을 요구한다. False 면 기존 이진 판정.
+        # grade_threshold: 등급 ≥ 이 값이면 최종 1. 저장된 등급을 재채점할 때
+        #   이 값만 바꾸면 되므로 API 재호출이 필요 없다.
+        self.graded = graded
+        self.grade_threshold = grade_threshold
         # time.monotonic() 기준 마감 시각. 넘기면 남은 호출을 포기하고 0으로 낸다.
         # 2시간 초과는 '제출 오류'로 일일 제출 횟수가 차감되므로, 일부 항목을 0으로
         # 내더라도 파일을 남기는 쪽이 언제나 낫다.
@@ -238,6 +308,7 @@ class Pipeline:
                 gosi=self.gosi,
                 law_text=self.law_texts.get(task.group.key, ""),
                 budget=budget,
+                graded=self.graded,
             )
             n = self.runner.count_tokens(msgs)
             if n <= self.prompt_budget - self.max_tokens or budget <= 1200:
@@ -273,7 +344,7 @@ class Pipeline:
             """한 스키마 묶음을 청크 단위로 실행. 중단했으면 False."""
             nonlocal done
             cfg = GenConfig(max_tokens=self.max_tokens, seed=self.seed,
-                            schema=prompts.build_schema(sig))
+                            schema=prompts.build_schema(sig, graded=self.graded))
             for s in range(0, len(indices), chunk):
                 part = indices[s:s + chunk]
                 if skippable:
@@ -302,7 +373,7 @@ class Pipeline:
                              key=lambda i: (not tasks[i].mandatory,
                                             order.get(tasks[i].group.key, 99)))
             cfgs = [GenConfig(max_tokens=self.max_tokens, seed=self.seed,
-                              schema=prompts.build_schema(tuple(tasks[i].items)))
+                              schema=prompts.build_schema(tuple(tasks[i].items), graded=self.graded))
                     for i in ordered]
 
             def _tick(_):
@@ -349,7 +420,7 @@ class Pipeline:
         for t, text in zip(tasks, outs):
             if not text:
                 self.stats.n_empty += 1
-            parsed, missing = parse_group(text, t.items)
+            parsed, missing = parse_group(text, t.items, graded=self.graded)
             self.stats.n_missing_items += len(missing)
             judged[t.rec.id].update(parsed)
 
@@ -376,7 +447,9 @@ class Pipeline:
                 continue
             g = gating.gate(by_rec[rid])
             for item, cell in cells.items():
-                if cell.get("위반여부") == 1 and g.get(item, True):
+                # 문턱을 넘긴 칸만 재검토 대상이다 (등급은 원본 그대로 보존된다)
+                if (int(cell.get(prompts.GRADE_KEY, 0) or 0) >= self.grade_threshold
+                        and g.get(item, True)):
                     targets.append((rid, item, cell.get("근거문구")))
 
         if not targets:
@@ -421,8 +494,15 @@ class Pipeline:
     # ---- 결합 -----------------------------------------------------------
     def finalize(self, rec: Record,
                  judged: Dict[str, Dict[str, Any]],
-                 dropped: Optional[set] = None) -> Dict[str, Dict[str, Any]]:
-        """LLM 판정 + 게이팅 + 규칙을 결합해 최종 24항목을 만든다."""
+                 dropped: Optional[set] = None,
+                 threshold: Optional[int] = None) -> Dict[str, Dict[str, Any]]:
+        """LLM 원본 등급 + 게이팅 + 규칙을 결합해 **최종 0/1** 24항목을 만든다.
+
+        여기가 **원본 등급이 0/1 로 바뀌는 유일한 지점**이다.
+        `threshold` 를 주면 그 값으로, 안 주면 `self.grade_threshold` 로 판정한다 —
+        저장된 등급을 재채점할 때 이 인자만 바꾸면 되므로 API 재호출이 필요 없다.
+        """
+        th = self.grade_threshold if threshold is None else threshold
         g = gating.gate(rec)
         src = rec.full_text
         out: Dict[str, Dict[str, Any]] = {}
@@ -433,8 +513,9 @@ class Pipeline:
             if not g[v]:
                 out[v] = {"위반여부": 0, "근거문구": ""}
                 continue
-            cell = judged.get(v) or {"위반여부": 0, "근거문구": None}
-            hit = 1 if cell.get("위반여부") == 1 else 0
+            cell = judged.get(v) or {}
+            # 문턱 적용 — LLM 원본 등급은 judged 안에 그대로 남는다.
+            hit = 1 if int(cell.get(prompts.GRADE_KEY, 0) or 0) >= th else 0
             if dropped and v in dropped:      # 2단계 검증에서 취소된 칸
                 hit = 0
 
