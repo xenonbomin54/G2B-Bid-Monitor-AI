@@ -113,9 +113,15 @@ def main(argv=None) -> int:
     # 상한에 닿은 적이 없다. 자세한 근거는 pps/pipeline.py 의 max_tokens 주석 참조.
     ap.add_argument("--max-tokens", type=int, default=1200)
     ap.add_argument("--quant", default="int8_per_channel_weight_only")
-    ap.add_argument("--graded", action="store_true",
-                    help="LLM 에 위반등급(0~3)을 요구한다. 기본 꺼짐 — 평가 서버는 "
-                         "인자 없이 실행하므로 기존 이진 판정 그대로 간다.")
+    # ⚠️ 기본이 **등급 모드**다. 평가 서버는 인자 없이 실행하므로 이 기본값이 곧 제출 설정이다.
+    #    측정과 제출을 일치시키기 위한 것이다 — dev200i/j/k/l 네 번의 측정이 전부 등급 모드였고
+    #    현재 프롬프트로 이진 모드를 측정한 적이 한 번도 없다.
+    #    최고점 dev200l Macro 0.6758 이 등급 모드 · 문턱 2 의 값이다.
+    #    이진 모드로 되돌리려면 --binary 를 준다(그 설정은 미측정이므로 제출에 쓰지 말 것).
+    ap.add_argument("--graded", dest="graded", action="store_true", default=True,
+                    help="LLM 에 위반등급(0~3)을 요구한다. **기본 켜짐**(측정된 설정).")
+    ap.add_argument("--binary", dest="graded", action="store_false",
+                    help="위반여부 0/1 로 받는다. 현재 프롬프트에서 미측정 — 제출에 쓰지 말 것.")
     ap.add_argument("--grade-threshold", type=int, default=None,
                     help="등급 ≥ 이 값이면 위반. 기본값은 pps/pipeline.py 의 "
                          "GRADE_THRESHOLD_DEFAULT 하나로 관리한다.")

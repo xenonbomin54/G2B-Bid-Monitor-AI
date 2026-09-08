@@ -52,12 +52,23 @@ def model_name_candidates(rec: Record, limit: int = 25, width: int = 110) -> Lis
 
 
 def equivalence_note(rec: Record) -> str:
+    """'동등 이상' 류 문구를 **원문 그대로** 돌려준다. 판정하지 않는다.
+
+    ⚠️ 예전에는 "대체 허용 문구 있음" 이라고 단정했다. 그러면 프롬프트의
+    "동등 이상 문구가 함께 있으면 위반이 아니다" 와 맞물려 **사실 블록이 판정을
+    대신 내려 버린다.** dev200i 의 v9 놓침 PPS-DEV-050 이 그 사례다 —
+    모델명(SH-F800·TSQ80·AGRAS T25 …)을 정확히 뽑아 놓고도 이 한 줄이 모델을 0 으로 밀었다.
+    문구가 존재하는 것과 **그 문구가 나열된 품목 전부에 실제로 적용되는지**는 다르다.
+    사실만 주고 판단은 모델이 한다.
+    """
     text = rec.text_of("규격서", "과업지시서", "제안요청서") or rec.notice_text
     m = _EQUIV.search(text)
     if not m:
-        return "대체 허용 문구('동등 이상' 등) 없음"
+        return "대체 관련 문구('동등 이상' 등)를 찾지 못했다."
     s, e = max(0, m.start() - 40), min(len(text), m.end() + 40)
-    return "대체 허용 문구 있음: …" + re.sub(r"\s+", " ", text[s:e]) + "…"
+    return ("대체 관련 문구(원문 인용): …" + re.sub(r"\s+", " ", text[s:e]) + "…\n"
+            "  ※ 이 문구가 **위에 나열된 품목 전부에** 동등 이상 대체를 실제로 허용하는지는 "
+            "직접 확인하라. 문구의 존재만으로 위반이 아니라고 단정하지 마라.")
 
 
 def candidate_block(rec: Record) -> str:

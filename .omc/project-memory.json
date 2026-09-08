@@ -114,15 +114,15 @@
   },
   "hotPaths": [
     {
-      "path": "pps/pipeline.py",
-      "accessCount": 13,
-      "lastAccessed": 1788793981178,
+      "path": "STATUS.md",
+      "accessCount": 18,
+      "lastAccessed": 1788846619260,
       "type": "file"
     },
     {
-      "path": "STATUS.md",
-      "accessCount": 12,
-      "lastAccessed": 1788820020821,
+      "path": "pps/pipeline.py",
+      "accessCount": 13,
+      "lastAccessed": 1788793981178,
       "type": "file"
     },
     {
@@ -132,21 +132,21 @@
       "type": "file"
     },
     {
-      "path": "pps/runner.py",
-      "accessCount": 4,
-      "lastAccessed": 1788777427515,
+      "path": "pps/prompts.py",
+      "accessCount": 8,
+      "lastAccessed": 1788838449395,
       "type": "file"
     },
     {
       "path": "tools/evaluate.py",
-      "accessCount": 4,
-      "lastAccessed": 1788793759930,
+      "accessCount": 5,
+      "lastAccessed": 1788852349512,
       "type": "file"
     },
     {
-      "path": "pps/prompts.py",
-      "accessCount": 3,
-      "lastAccessed": 1788793513871,
+      "path": "pps/runner.py",
+      "accessCount": 4,
+      "lastAccessed": 1788777427515,
       "type": "file"
     },
     {
@@ -177,6 +177,18 @@
       "path": ".env",
       "accessCount": 1,
       "lastAccessed": 1788794681712,
+      "type": "file"
+    },
+    {
+      "path": "pps/spec.py",
+      "accessCount": 1,
+      "lastAccessed": 1788824808904,
+      "type": "file"
+    },
+    {
+      "path": "pps/gosimatch.py",
+      "accessCount": 1,
+      "lastAccessed": 1788824841632,
       "type": "file"
     }
   ],

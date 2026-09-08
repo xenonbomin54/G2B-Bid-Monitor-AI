@@ -40,9 +40,13 @@ def main() -> int:
                     help="2단계 검증 — 1로 판정된 칸을 재질의해 과잉 판정을 걷어낸다")
     ap.add_argument("--data", default=os.path.join(OPEN, "dev.jsonl.gz"))
     ap.add_argument("--labels", default=os.path.join(OPEN, "dev_labels.csv"))
-    ap.add_argument("--graded", action="store_true",
-                    help="LLM 에 위반등급(0~3)을 요구한다. 저장해 두면 "
-                         "tools/sweep_threshold.py 로 API 없이 문턱을 스윕할 수 있다.")
+    # 기본을 등급 모드로 둔다 — build_submit.py 의 제출 기본값과 **같아야** 한다.
+    # 측정 모드와 제출 모드가 갈리면 측정값이 제출을 설명하지 못한다(그 함정에 한 번 빠졌다).
+    ap.add_argument("--graded", dest="graded", action="store_true", default=True,
+                    help="LLM 에 위반등급(0~3)을 요구한다. **기본 켜짐**(제출 설정과 동일). "
+                         "저장해 두면 tools/sweep_threshold.py 로 API 없이 문턱을 스윕할 수 있다.")
+    ap.add_argument("--binary", dest="graded", action="store_false",
+                    help="위반여부 0/1 로 받는다. 제출 설정과 달라지므로 비교용으로만.")
     ap.add_argument("--grade-threshold", type=int, default=GRADE_THRESHOLD_DEFAULT,
                     help=f"등급 ≥ 이 값이면 위반 (기본 {GRADE_THRESHOLD_DEFAULT})")
     ap.add_argument("--save-grades", default=None,
