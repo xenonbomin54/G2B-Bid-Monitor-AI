@@ -45,6 +45,12 @@ def main() -> int:
     ap.add_argument("--graded", dest="graded", action="store_true", default=True,
                     help="LLM 에 위반등급(0~3)을 요구한다. **기본 켜짐**(제출 설정과 동일). "
                          "저장해 두면 tools/sweep_threshold.py 로 API 없이 문턱을 스윕할 수 있다.")
+    ap.add_argument("--select", action="store_true",
+                    help="선택형 출력 — 위반 항목만 배열로 받는다(§prompts 선택형 출력). "
+                         "과예측 1.62배를 줄이는 것이 목적이다.")
+    ap.add_argument("--dual", action="store_true",
+                    help="양면 판단 — 등급 앞에 적법근거를 먼저 적게 한다(§prompts 양면 판단). "
+                         "위반만 찾으라는 압력이 만드는 오탐을 줄이는 것이 목적이다.")
     ap.add_argument("--binary", dest="graded", action="store_false",
                     help="위반여부 0/1 로 받는다. 제출 설정과 달라지므로 비교용으로만.")
     ap.add_argument("--grade-threshold", type=int, default=GRADE_THRESHOLD_DEFAULT,
@@ -61,12 +67,15 @@ def main() -> int:
 
     print(f"레코드 {len(recs)}건 · 러너 {args.runner}"
           f"{' · 규칙결합 OFF' if args.no_rules else ''}"
+          f"{' · 선택형' if args.select else ''}"
+          f"{' · 양면판단' if args.dual else ''}"
           f"{' · 등급모드(0~3)' if args.graded else ''}"
           f" · 문턱 {args.grade_threshold}")
 
     runner = make_runner(args.runner, items=ITEMS)
     pipe = Pipeline(runner, tbl, gosi=gosi, use_rules=not args.no_rules,
-                    graded=args.graded, grade_threshold=args.grade_threshold)
+                    graded=args.graded, grade_threshold=args.grade_threshold,
+                    select=args.select, dual=args.dual)
 
     judged = pipe.run(recs, chunk=args.chunk)
 

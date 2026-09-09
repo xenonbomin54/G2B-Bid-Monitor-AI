@@ -122,6 +122,11 @@ def main(argv=None) -> int:
                     help="LLM 에 위반등급(0~3)을 요구한다. **기본 켜짐**(측정된 설정).")
     ap.add_argument("--binary", dest="graded", action="store_false",
                     help="위반여부 0/1 로 받는다. 현재 프롬프트에서 미측정 — 제출에 쓰지 말 것.")
+    # 양면 판단 — 항목별로 `적법근거` 를 등급 **앞에** 적게 해서 반증을 먼저 탐색시킨다.
+    # dev 40건 예비 측정: Macro 0.7868 → 0.8319. 켤 때는 출력이 길어지므로
+    # max_tokens 를 함께 올려야 한다(아래에서 자동 상향, prompt_budget 도 같이 줄어든다).
+    ap.add_argument("--dual", action="store_true",
+                    help="양면 판단(적법근거 → 등급 순서). 출력이 길어져 추론 시간이 늘어난다.")
     ap.add_argument("--grade-threshold", type=int, default=None,
                     help="등급 ≥ 이 값이면 위반. 기본값은 pps/pipeline.py 의 "
                          "GRADE_THRESHOLD_DEFAULT 하나로 관리한다.")
@@ -180,12 +185,19 @@ def main(argv=None) -> int:
     # grade_threshold 를 넘기지 않으면 Pipeline 기본값(GRADE_THRESHOLD_DEFAULT)을 쓴다
     # — 문턱을 한 곳에서만 관리하기 위한 것이다.
     _th = {} if args.grade_threshold is None else {"grade_threshold": args.grade_threshold}
+    # 양면 판단은 항목당 근거가 더 붙는다. max_tokens 를 사용자가 명시하지 않았다면
+    # 여기서 올려 둔다 — Pipeline 안에서만 올리면 prompt_budget 이 어긋난다.
+    _mt = args.max_tokens
+    if args.dual and _mt <= 1200:
+        _mt = 1800
     pipe = Pipeline(runner, tbl, gosi=gosi,
-                    max_tokens=args.max_tokens,
-                    prompt_budget=args.max_model_len - args.max_tokens,
+                    max_tokens=_mt,
+                    prompt_budget=args.max_model_len - _mt,
                     deadline=_t_start + args.time_budget,
-                    graded=args.graded, **_th)
-    log(f"판정모드 {'등급(0~3)' if args.graded else '이진(0/1)'} · 문턱 {pipe.grade_threshold}")
+                    graded=args.graded, dual=args.dual, **_th)
+    log(f"판정모드 {'등급(0~3)' if args.graded else '이진(0/1)'}"
+        f"{' · 양면판단' if args.dual else ''} · 문턱 {pipe.grade_threshold}"
+        f" · max_tokens {pipe.max_tokens}")
     log(f"추론 시간예산 {args.time_budget - (time.monotonic() - _t_start):.0f}s 남음")
 
     try:

@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1788775822023,
+  "lastScanned": 1788952362551,
   "projectRoot": "/Users/xenonbomin54/나라장터",
   "techStack": {
     "languages": [],
@@ -33,7 +33,7 @@
       "path": "build",
       "purpose": "Build output",
       "fileCount": 2,
-      "lastAccessed": 1788775822006,
+      "lastAccessed": 1788952362540,
       "keyFiles": [
         "requirements.txt",
         "script.py"
@@ -43,7 +43,7 @@
       "path": "labeling",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1788775822009,
+      "lastAccessed": 1788952362540,
       "keyFiles": [
         "README.md"
       ]
@@ -52,7 +52,7 @@
       "path": "open",
       "purpose": null,
       "fileCount": 5,
-      "lastAccessed": 1788775822012,
+      "lastAccessed": 1788952362541,
       "keyFiles": [
         "README.md",
         "dev.jsonl.gz",
@@ -64,8 +64,8 @@
     "out": {
       "path": "out",
       "purpose": "Build output",
-      "fileCount": 26,
-      "lastAccessed": 1788775822013,
+      "fileCount": 56,
+      "lastAccessed": 1788952362541,
       "keyFiles": [
         "deadline_test.csv",
         "dev200_eval.log",
@@ -77,8 +77,8 @@
     "pps": {
       "path": "pps",
       "purpose": null,
-      "fileCount": 17,
-      "lastAccessed": 1788775822013,
+      "fileCount": 18,
+      "lastAccessed": 1788952362541,
       "keyFiles": [
         "__init__.py",
         "compare.py",
@@ -90,8 +90,8 @@
     "tools": {
       "path": "tools",
       "purpose": null,
-      "fileCount": 8,
-      "lastAccessed": 1788775822013,
+      "fileCount": 11,
+      "lastAccessed": 1788952362541,
       "keyFiles": [
         "analyze_errors.py",
         "audit_gates.py",
@@ -104,7 +104,7 @@
       "path": "open/data",
       "purpose": "Data files",
       "fileCount": 3,
-      "lastAccessed": 1788775822014,
+      "lastAccessed": 1788952362542,
       "keyFiles": [
         "test.jsonl.gz",
         "정답스키마_디코딩.json",
@@ -112,91 +112,6 @@
       ]
     }
   },
-  "hotPaths": [
-    {
-      "path": "STATUS.md",
-      "accessCount": 32,
-      "lastAccessed": 1788948561989,
-      "type": "file"
-    },
-    {
-      "path": "pps/pipeline.py",
-      "accessCount": 13,
-      "lastAccessed": 1788793981178,
-      "type": "file"
-    },
-    {
-      "path": "pps/prompts.py",
-      "accessCount": 12,
-      "lastAccessed": 1788905712574,
-      "type": "file"
-    },
-    {
-      "path": "pps/compare.py",
-      "accessCount": 8,
-      "lastAccessed": 1788781784976,
-      "type": "file"
-    },
-    {
-      "path": "tools/evaluate.py",
-      "accessCount": 5,
-      "lastAccessed": 1788852349512,
-      "type": "file"
-    },
-    {
-      "path": "pps/runner.py",
-      "accessCount": 4,
-      "lastAccessed": 1788777427515,
-      "type": "file"
-    },
-    {
-      "path": "pps/law.py",
-      "accessCount": 2,
-      "lastAccessed": 1788776590618,
-      "type": "file"
-    },
-    {
-      "path": "pps/grades.py",
-      "accessCount": 1,
-      "lastAccessed": 1788793634426,
-      "type": "file"
-    },
-    {
-      "path": "tools/sweep_threshold.py",
-      "accessCount": 1,
-      "lastAccessed": 1788793796117,
-      "type": "file"
-    },
-    {
-      "path": "tools/test_threshold.py",
-      "accessCount": 1,
-      "lastAccessed": 1788793878156,
-      "type": "file"
-    },
-    {
-      "path": ".env",
-      "accessCount": 1,
-      "lastAccessed": 1788794681712,
-      "type": "file"
-    },
-    {
-      "path": "pps/spec.py",
-      "accessCount": 1,
-      "lastAccessed": 1788824808904,
-      "type": "file"
-    },
-    {
-      "path": "pps/gosimatch.py",
-      "accessCount": 1,
-      "lastAccessed": 1788824841632,
-      "type": "file"
-    },
-    {
-      "path": "tools/make_labelset.py",
-      "accessCount": 1,
-      "lastAccessed": 1788877744789,
-      "type": "file"
-    }
-  ],
+  "hotPaths": [],
   "userDirectives": []
 }

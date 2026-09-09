@@ -117,6 +117,44 @@ def _as_grade(x: Any, binary: bool) -> int:
     return 0
 
 
+def parse_select(text: str, items: Sequence[str]) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
+    """선택형 출력 파싱 — `위반항목` 배열에 담긴 것만 위반이다.
+
+    §prompts 선택형 출력 참조. 고르지 않은 항목은 0 이다 — 이것이 이 구조의 요점이다.
+    "위반 없음"이 24번의 부정이 아니라 **빈 배열 한 번**으로 표현된다.
+
+    배열을 못 읽으면 `missing` 에 전 항목을 담아 호출 실패로 집계한다 —
+    빈 배열(정상적인 '위반 없음')과 파싱 실패를 구분해야 한다.
+    """
+    obj = extract_json(text)
+    out: Dict[str, Dict[str, Any]] = {
+        v: {prompts.GRADE_KEY: 0, "근거문구": None} for v in items}
+    if not isinstance(obj, dict):
+        return out, list(items)
+    arr = obj.get(prompts.SELECT_KEY)
+    if arr is None:
+        # 키 이름이 다르게 나온 경우 — 배열 값을 하나 찾아본다
+        arr = next((v for v in obj.values() if isinstance(v, list)), None)
+    if not isinstance(arr, list):
+        return out, list(items)
+    want = set(items)
+    for e in arr:
+        if isinstance(e, str):
+            if e in want:
+                out[e] = {prompts.GRADE_KEY: prompts.GRADE_MAX, "근거문구": None}
+            continue
+        if not isinstance(e, dict):
+            continue
+        it = e.get("항목") or e.get("item")
+        if it not in want:
+            continue
+        ev = e.get("근거문구", e.get("evidence"))
+        if ev is not None and not isinstance(ev, str):
+            ev = str(ev)
+        out[it] = {prompts.GRADE_KEY: prompts.GRADE_MAX, "근거문구": ev}
+    return out, []
+
+
 def parse_group(text: str, items: Sequence[str],
                 graded: bool = False) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
     """모델 출력 → {항목: {위반등급, 근거문구}}. 빠진 항목은 0/None 으로 채운다.
@@ -256,12 +294,19 @@ class Pipeline:
         deadline: Optional[float] = None,
         graded: bool = False,
         grade_threshold: int = GRADE_THRESHOLD_DEFAULT,
+        select: bool = False,
+        dual: bool = False,
     ):
         self.runner = runner
         self.tbl = item_table
         self.gosi = gosi
         self.law_texts = law_texts or {}
         self.max_tokens = max_tokens
+        # 양면 판단은 항목당 `적법근거`(≤80자) 가 더 붙는다.
+        # 축약 전(300자) 실측 최대가 931자였고 축약판은 그보다 짧다.
+        # 1200 으로도 대개 들어가지만 9항목 그룹의 상한을 감당하려면 여유가 필요하다.
+        if dual and self.max_tokens < 1800:
+            self.max_tokens = 1800
         self.prompt_budget = prompt_budget
         self.seed = seed
         self.use_rules = use_rules
@@ -270,6 +315,12 @@ class Pipeline:
         #   이 값만 바꾸면 되므로 API 재호출이 필요 없다.
         self.graded = graded
         self.grade_threshold = grade_threshold
+        # select: 항목별 판정 대신 **위반 항목만 고르는** 배열을 받는다.
+        #   dev200n 실측 — 예측 248 vs 정답 153(1.62배 과예측), 정답0 공고 112건에서 FP 62건.
+        #   F1 = 2TP/(예측+정답) 이므로 과예측을 줄이는 것이 가장 큰 레버다.
+        self.select = select
+        # dual: 등급 앞에 `적법근거` 를 두어 반증을 먼저 탐색시킨다.
+        self.dual = dual
         # time.monotonic() 기준 마감 시각. 넘기면 남은 호출을 포기하고 0으로 낸다.
         # 2시간 초과는 '제출 오류'로 일일 제출 횟수가 차감되므로, 일부 항목을 0으로
         # 내더라도 파일을 남기는 쪽이 언제나 낫다.
@@ -309,6 +360,8 @@ class Pipeline:
                 law_text=self.law_texts.get(task.group.key, ""),
                 budget=budget,
                 graded=self.graded,
+                select=self.select,
+                dual=self.dual,
             )
             n = self.runner.count_tokens(msgs)
             if n <= self.prompt_budget - self.max_tokens or budget <= 1200:
@@ -344,7 +397,8 @@ class Pipeline:
             """한 스키마 묶음을 청크 단위로 실행. 중단했으면 False."""
             nonlocal done
             cfg = GenConfig(max_tokens=self.max_tokens, seed=self.seed,
-                            schema=prompts.build_schema(sig, graded=self.graded))
+                            schema=prompts.build_schema(sig, graded=self.graded, select=self.select,
+                                                       dual=self.dual))
             for s in range(0, len(indices), chunk):
                 part = indices[s:s + chunk]
                 if skippable:
@@ -373,7 +427,8 @@ class Pipeline:
                              key=lambda i: (not tasks[i].mandatory,
                                             order.get(tasks[i].group.key, 99)))
             cfgs = [GenConfig(max_tokens=self.max_tokens, seed=self.seed,
-                              schema=prompts.build_schema(tuple(tasks[i].items), graded=self.graded))
+                              schema=prompts.build_schema(tuple(tasks[i].items), graded=self.graded,
+                                                          select=self.select, dual=self.dual))
                     for i in ordered]
 
             def _tick(_):
@@ -420,7 +475,10 @@ class Pipeline:
         for t, text in zip(tasks, outs):
             if not text:
                 self.stats.n_empty += 1
-            parsed, missing = parse_group(text, t.items, graded=self.graded)
+            if self.select:
+                parsed, missing = parse_select(text, t.items)
+            else:
+                parsed, missing = parse_group(text, t.items, graded=self.graded)
             self.stats.n_missing_items += len(missing)
             judged[t.rec.id].update(parsed)
 

@@ -270,24 +270,95 @@ GRADE_GUIDE = """
 등급을 매길 때 문턱을 스스로 정하지 마라 — 확신의 정도를 그대로 등급으로 표현하면 된다."""
 
 
-def build_schema(items: Sequence[str], graded: bool = False) -> Dict[str, Any]:
+# --------------------------------------------------------------------------- 선택형 출력
+# 왜 만들었나 (dev200n 실측):
+#   · 모델은 **공고당 약 0.6건의 FP 를 문서 내용과 무관하게** 만들어낸다.
+#     정답 양성 0개 공고(112건)에서 FP 62건 = 전체 FP 121건의 51%.
+#     그 112건 중 모델이 "위반 없음"으로 맞춘 것은 69건(62%)뿐이다.
+#   · 예측 248칸 vs 정답 153칸 = **1.62배 과예측**.
+#   · 등급은 사실상 이진이다(등급 2 가 3,487칸 중 19칸) → 문턱·consensus 가 무력하다.
+#     실제로 만장일치 투표는 +0.0074, 문턱 스윕은 ±0.01 에 그쳤다.
+#   · F1 = 2TP/(예측+정답) 이므로 **예측을 33% 줄이고 TP 를 95% 지키면 F1 0.756**(+0.07)이다.
+#
+# 진단: 항목마다 "이것이 위반인가?"를 24번 따로 묻는 구조가 문제다.
+#   각 질문이 독립적으로 거짓양성 기회를 갖고, "아니다"를 24번 말해야 깨끗한 공고가 된다.
+# 처방: 한 번의 **선택** 문제로 바꾼다 — "이 중 위반인 것만 골라라. 없으면 빈 배열."
+#   '위반 없음'이 24번의 부정이 아니라 **한 번의 자연스러운 출력**이 된다.
+SELECT_KEY = "위반항목"
+
+# 양면 판단(§dual) — 판정 **앞에** 반증을 적게 하는 필드.
+# 스키마 순서가 생성 순서이므로, 적법근거를 먼저 두면 등급을 정하기 전에
+# "지켰다고 볼 근거"를 한 번 탐색하게 된다. 없으면 null 이 정답이다.
+#
+# ⚠️ 길이 상한 80자는 **시간예산 제약**이다. 300자로 재면 출력이 기존의 2.77배가 되고
+# (캐시 실측: 중앙값 154→426자), 평가셋 7,412 호출 / 6,300초 = 초당 1.18회를
+# 지킬 수 없다. 초과분은 0 으로 제출되어 재현율을 직접 깎는다.
+# 효과는 길이가 아니라 **순서**(반증을 먼저 쓴다)에서 나온다는 가정이고, 이 가정은
+# 축약판 40건 측정으로 검증한다.
+LAWFUL_KEY = "적법근거"
+
+
+def build_select_schema(items: Sequence[str]) -> Dict[str, Any]:
+    """선택형 스키마 — 위반인 항목만 배열로 받는다. 빈 배열이 '위반 없음'이다."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": [SELECT_KEY],
+        "properties": {
+            SELECT_KEY: {
+                "type": "array",
+                "maxItems": len(items),
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["항목", "근거문구"],
+                    "properties": {
+                        "항목": {"type": "string", "enum": list(items)},
+                        "근거문구": {"type": ["string", "null"], "maxLength": 600},
+                    },
+                },
+            },
+        },
+    }
+
+
+def build_schema(items: Sequence[str], graded: bool = False,
+                 select: bool = False, dual: bool = False) -> Dict[str, Any]:
     """제약 디코딩용 JSON Schema. 요청한 항목만 포함한다.
 
     부재탐지 항목은 근거문구를 null 로 고정한다 — 인용할 원문이 없다.
     graded=True 면 `위반여부 0|1` 대신 `위반등급 0~3` 을 받는다.
+    select=True 면 항목별 판정 대신 **위반 항목만 고르는** 배열을 받는다(§선택형 출력).
+    dual=True 면 등급 **앞에** `적법근거` 를 두어 반증을 먼저 탐색시킨다(§양면 판단).
     """
+    if select:
+        return build_select_schema(items)
     key = GRADE_KEY if graded else BINARY_KEY
     enum = list(range(GRADE_MIN, GRADE_MAX + 1)) if graded else [0, 1]
     props: Dict[str, Any] = {}
     for v in items:
+        ev = ({"type": "null"} if v in ABSENCE
+              else {"type": ["string", "null"], "maxLength": 600})
+        if dual:
+            # 순서가 곧 생성 순서다: 적법근거 → 등급 → 근거문구.
+            props[v] = {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [LAWFUL_KEY, key, "근거문구"],
+                "properties": {
+                    LAWFUL_KEY: {"type": ["string", "null"], "maxLength": 80},
+                    key: {"type": "integer", "enum": enum},
+                    "근거문구": ev,
+                },
+            }
+            continue
         props[v] = {
             "type": "object",
             "additionalProperties": False,
             "required": [key, "근거문구"],
             "properties": {
                 key: {"type": "integer", "enum": enum},
-                "근거문구": ({"type": "null"} if v in ABSENCE
-                          else {"type": ["string", "null"], "maxLength": 600}),
+                "근거문구": ev,
             },
         }
     return {
@@ -489,6 +560,8 @@ def build_messages(
     law_text: str = "",
     budget: Optional[int] = None,
     graded: bool = False,
+    select: bool = False,
+    dual: bool = False,
 ) -> List[Dict[str, str]]:
     """한 그룹에 대한 대화 메시지.
 
@@ -526,7 +599,30 @@ def build_messages(
                      + _safe("공동지분율", lambda: compare.joint_share_check(rec)))
 
     parts.append(f"\n[공고 문서]\n{doc}")
-    if graded:
+    if select:
+        # 선택형 — '위반 없음'이 24번의 부정이 아니라 한 번의 빈 배열이 된다.
+        parts.append(
+            f"\n위 항목 중 **위반에 해당하는 것만** 골라 `{SELECT_KEY}` 배열에 담아라.\n"
+            "각 원소는 {\"항목\": \"vNN\", \"근거문구\": \"원문 그대로\"} 형식이다.\n"
+            "**해당하는 항목이 하나도 없으면 빈 배열 `[]` 을 낸다** — 그것이 정상적인 답이다.\n"
+            "공공 입찰공고는 담당자가 법령을 참고해 작성하므로 위반이 없는 공고가 많다.\n"
+            "고르지 않은 항목은 '위반이 아니다'로 처리되니, 확실한 것만 고르면 된다."
+        )
+    elif graded and dual:
+        # 양면 판단 — 등급을 정하기 전에 반증을 한 번 적게 한다.
+        # 위반만 찾으라고 하면 '찾아야 한다'는 압력이 생기고, 그 압력이
+        # 완전 적법한 공고에서도 공고당 0.6건의 오탐을 만들어 왔다.
+        parts.append(
+            f"\n위 항목 각각에 대해 **다음 순서로** 답하라.\n"
+            f"1. `{LAWFUL_KEY}` — 이 공고가 이 항목에 관해 **법령을 지켰다고 볼 근거**를 "
+            f"먼저 찾는다. 적법하게 기재된 문구를 원문 그대로 인용하거나, 이 항목이 "
+            f"이 공고에 적용되지 않는 이유를 적는다. **80자 안으로 짧게** 쓴다.\n"
+            f"찾지 못했을 때만 null 을 쓴다.\n"
+            f"2. `{GRADE_KEY}` (0~3) — 1번을 쓴 뒤에 정한다. "
+            f"적법근거가 뚜렷하면 0 또는 1이다.\n"
+            f"3. `근거문구` — 위반 등급이 2 이상일 때 그 근거를 원문 그대로 인용한다.\n"
+            f"공공 입찰공고는 담당자가 법령을 참고해 작성하므로 적법한 항목이 대부분이다.")
+    elif graded:
         parts.append(
             f"\n위 항목 각각에 대해 {GRADE_KEY}(0~3)와 근거문구를 JSON으로 내라.")
     else:
