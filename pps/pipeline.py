@@ -396,15 +396,30 @@ class Pipeline:
                     skippable: bool) -> bool:
             """한 스키마 묶음을 청크 단위로 실행. 중단했으면 False."""
             nonlocal done
-            cfg = GenConfig(max_tokens=self.max_tokens, seed=self.seed,
-                            schema=prompts.build_schema(sig, graded=self.graded, select=self.select,
-                                                       dual=self.dual))
+
+            def _cfg():
+                return GenConfig(max_tokens=self.max_tokens, seed=self.seed,
+                                 schema=prompts.build_schema(
+                                     sig, graded=self.graded,
+                                     select=self.select, dual=self.dual))
+
+            cfg = _cfg()
             for s in range(0, len(indices), chunk):
                 part = indices[s:s + chunk]
                 if skippable:
                     left = self._time_left()
                     if left is not None:
                         per = (time.time() - t0) / max(1, done)
+                        if left <= per * len(part) * 1.3 and self.dual:
+                            # 양면 판단은 출력이 기존의 2.25배다(캐시 실측 154→347자).
+                            # 시간이 빡빡해지면 보강 호출을 통째로 버리는 것보다
+                            # 양면 판단만 끄고 계속하는 쪽이 낫다 — 버린 칸은 0 이 되지만
+                            # 짧은 판정이라도 받으면 그 칸의 재현율이 살아난다.
+                            print(f"  ⏱ 시간예산 압박 (남은 {left:.0f}s) → "
+                                  f"양면 판단 끄고 계속")
+                            self.dual = False
+                            cfg = _cfg()
+                            per *= 0.7   # 출력이 짧아진 만큼 청크당 소요도 줄어든다
                         if left <= per * len(part) * 1.3:
                             print(f"  ⏱ 시간예산 소진 (남은 {left:.0f}s) → "
                                   f"보강 호출 중단")

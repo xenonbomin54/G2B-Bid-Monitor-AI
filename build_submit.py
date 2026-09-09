@@ -122,11 +122,15 @@ def main(argv=None) -> int:
                     help="LLM 에 위반등급(0~3)을 요구한다. **기본 켜짐**(측정된 설정).")
     ap.add_argument("--binary", dest="graded", action="store_false",
                     help="위반여부 0/1 로 받는다. 현재 프롬프트에서 미측정 — 제출에 쓰지 말 것.")
-    # 양면 판단 — 항목별로 `적법근거` 를 등급 **앞에** 적게 해서 반증을 먼저 탐색시킨다.
-    # dev 40건 예비 측정: Macro 0.7868 → 0.8319. 켤 때는 출력이 길어지므로
-    # max_tokens 를 함께 올려야 한다(아래에서 자동 상향, prompt_budget 도 같이 줄어든다).
-    ap.add_argument("--dual", action="store_true",
-                    help="양면 판단(적법근거 → 등급 순서). 출력이 길어져 추론 시간이 늘어난다.")
+    # ⚠️ 양면 판단이 **기본 켜짐**이다 — 평가 서버는 인자 없이 실행하므로 이 기본값이 곧 제출 설정이다.
+    #    항목별로 `적법근거`(≤80자)를 등급 **앞에** 적게 해서 반증을 먼저 탐색시킨다.
+    #    dev 40건: Macro 0.7868 → 0.8455 (FP 16→14). 300자판(0.8319)보다 짧은 쪽이 좋았다.
+    #    비용은 출력 2.25배(캐시 실측 154→347자)이고, 시간이 빡빡해지면
+    #    pps/pipeline.py 의 폴백이 양면 판단만 끄고 계속한다.
+    ap.add_argument("--dual", dest="dual", action="store_true", default=True,
+                    help="양면 판단(적법근거 → 등급 순서). **기본 켜짐**(측정된 설정).")
+    ap.add_argument("--no-dual", dest="dual", action="store_false",
+                    help="양면 판단 끄기 — dev200n 등급형으로 되돌린다.")
     ap.add_argument("--grade-threshold", type=int, default=None,
                     help="등급 ≥ 이 값이면 위반. 기본값은 pps/pipeline.py 의 "
                          "GRADE_THRESHOLD_DEFAULT 하나로 관리한다.")
