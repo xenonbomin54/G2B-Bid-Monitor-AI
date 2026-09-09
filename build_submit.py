@@ -127,10 +127,12 @@ def main(argv=None) -> int:
     #    dev 40건: Macro 0.7868 → 0.8455 (FP 16→14). 300자판(0.8319)보다 짧은 쪽이 좋았다.
     #    비용은 출력 2.25배(캐시 실측 154→347자)이고, 시간이 빡빡해지면
     #    pps/pipeline.py 의 폴백이 양면 판단만 끄고 계속한다.
-    ap.add_argument("--dual", dest="dual", action="store_true", default=True,
-                    help="양면 판단(적법근거 → 등급 순서). **기본 켜짐**(측정된 설정).")
-    ap.add_argument("--no-dual", dest="dual", action="store_false",
-                    help="양면 판단 끄기 — dev200n 등급형으로 되돌린다.")
+    # ⛔ 기본 꺼짐. dev200 **전체** 측정에서 기각됐다: Macro 0.6822 → 0.6609.
+    #    dev 40건 예선에서는 좋아 보였지만(0.7868→0.8455) 40건은 정의 항목이 적어
+    #    표본 노이즈가 컸다. 같은 40건을 전체와 같은 방식으로 재계산하면
+    #    0.6579 → 0.6064 로 오히려 나빴다. **예선 표본은 40건으로 하지 말 것.**
+    ap.add_argument("--dual", dest="dual", action="store_true", default=False,
+                    help="양면 판단(적법근거 → 등급 순서). dev200 전체에서 기각 — 제출에 쓰지 말 것.")
     ap.add_argument("--grade-threshold", type=int, default=None,
                     help="등급 ≥ 이 값이면 위반. 기본값은 pps/pipeline.py 의 "
                          "GRADE_THRESHOLD_DEFAULT 하나로 관리한다.")
