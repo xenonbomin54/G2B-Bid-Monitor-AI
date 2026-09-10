@@ -308,6 +308,26 @@ LAWFUL_KEY = "적법근거"
 # 그래서 **기업규모 제한의 허용 범위를 묻는 항목군**에만 쓴다. 이 6개는 항목표에서
 # 같은 조문(판로지원법 시행령 제2조의2 제1항·제2조의3 + 국가령 제21조 / 지방령 제20조)을 공유한다.
 # dev 점수로 고른 부분집합이 아니라 조문으로 정의된 집합이라는 점이 중요하다.
+# ⚠️ v15 는 **제외**한다 — 두 독립 측정에서 악화가 재현됐다.
+#      오프라인(g_n vs g_r, 문턱 3)  v15 −0.123
+#      실측  (dev200s vs dev200u)   v15 −0.200  TP 6→4
+#    v15 는 baseline 에서 F1 1.000 이던 항목이고, 적법근거를 먼저 찾게 하면
+#    "중소기업이 포함되었으니 적법" 쪽으로 기울어 진짜양성을 놓친다.
+#    v15 기준은 "소기업·소상공인만으로 좁히면 위반"이라 **반증 탐색이 판정 방향과 충돌**한다.
+#    (v13 은 같은 병기가 오히려 '위반 아님'의 근거이므로 방향이 반대다 — §항목지시 v17 주석)
+#    다만 이 제외는 dev 관측에서 나온 것이므로 '같은 조문을 공유하는 항목군'이라는
+#    원래 정의 근거보다 약하다. 과적합 위험을 안고 있다는 점을 기록해 둔다.
+# ⛔ **실험 결론: v15 제외는 개선이 아니다.** dev200 결손 0 실측(2026-09-10)
+#      baseline              0.7162
+#      dual v13~v18          0.7179  (+0.0017)
+#      dual v15 제외          0.7141  (−0.0021)   ← 오히려 나빠진다
+#    v15 자체는 회복됐다(0.800 → 0.923). 그런데 **v16 이 대신 무너졌다**(0.667 → 0.500,
+#    TP 4→3). v15 를 목록에서 빼자 G2 지시문의 항목 나열이 바뀌고, 그것이 v16 판정을
+#    흔들었다. 6항목 F1 합계로 보면 ② +0.055 vs ③ −0.037 이다.
+#    → **프롬프트는 항목 단위로 분해되지 않는다.** 'dev 에서 나쁜 항목만 빼면 좋아진다'는
+#      직관은 틀렸다. G2 분할 실패(0.6737)와 같은 원리다.
+#    dual 자체도 +0.0017 로 노이즈 수준이므로 **제출에는 쓰지 않는다**(기본 OFF).
+#    아래 목록은 v13~v18(조문으로 정의된 집합)로 되돌려 둔다 — 재실험할 때의 기준점이다.
 DUAL_ITEMS = frozenset({"v13", "v14", "v15", "v16", "v17", "v18"})
 
 # --------------------------------------------------------------------------- 사실 추출 (Architecture A)
@@ -781,32 +801,41 @@ def build_messages(
     if facts is not None:
         doc = render_facts(facts)
     elif group.full_doc:
-        doc = sections.full_context(rec, b)
+        doc = sections.full_context(rec, b, lang=lang)
     else:
         doc = sections.select(rec, sections.CUES[group.cue], b)
 
+    # 영어 지시문판(§prompts_en) — **지시문과 섹션 라벨만** 갈린다.
+    # 사실 블록 내용·공고 원문·항목명·스키마 키는 두 언어판이 같은 것을 쓴다.
+    en = (lang == "en")
+    L = (lambda k: _en.LABELS[k]) if en else (lambda k: k)
+
     parts = [
-        f"[검토 항목]\n{item_block(items, tbl)}",
-        f"\n[판정 지침]\n{group.지침(items)}",
+        f"[{L('검토 항목')}]\n"
+        + (_en.item_block(items, tbl, ABSENCE) if en else item_block(items, tbl)),
+        f"\n[{L('판정 지침')}]\n"
+        + (_en.지침(group.key, group.items, items) if en else group.지침(items)),
     ]
     if law_text:
-        parts.append(f"\n[관련 법령 조문]\n{law_text}")
-    parts.append("\n[나라장터 등록정보]\n" + _safe("등록정보", lambda: fact_block(rec)))
+        parts.append(f"\n[{L('관련 법령 조문')}]\n{law_text}")
+    parts.append(f"\n[{L('나라장터 등록정보')}]\n"
+                 + _safe("등록정보", lambda: fact_block(rec)))
 
     if group.key == "G2기업규모" and gosi is not None:
-        parts.append("\n[중기부고시 경쟁제품 대조]\n"
+        parts.append(f"\n[{L('중기부고시 경쟁제품 대조')}]\n"
                      + _safe("고시대조", lambda: gosimatch.block(rec, gosi)))
     if group.key == "G4설명회대조" and "v23" in items:
-        parts.append("\n[일정 검산]\n" + _safe("일정검산", lambda: schedule.fact_line(rec)))
+        parts.append(f"\n[{L('일정 검산')}]\n"
+                     + _safe("일정검산", lambda: schedule.fact_line(rec)))
     if group.key == "G3물품SW공동" and "v9" in items:
         # 모델명은 첨부 깊숙이 있어 섹션 파서가 놓친다(dev 입력누락 2건) → 후보를 따로 뽑아 준다
-        parts.append("\n[첨부에서 찾은 모델명·제조사 후보 줄 (v9)]\n"
+        parts.append(f"\n[{L('첨부에서 찾은 모델명·제조사 후보 줄 (v9)')}]\n"
                      + _safe("모델명후보", lambda: spec.candidate_block(rec)))
     if group.key == "G3물품SW공동" and "v21" in items:
         # 모델은 v21 기준("법정 하한보다 낮으면 위반")은 받지만 하한값을 모른다.
         # 지방 5% / 국가 10% 이고 20% 가감이 허용되므로 실효 하한은 4% / 8% —
         # 조문에서 계산되는 값이라 코드가 준다. 판정은 강제하지 않는다.
-        parts.append("\n[공동수급 최소지분율 (v21, 계산됨)]\n"
+        parts.append(f"\n[{L('공동수급 최소지분율 (v21, 계산됨)')}]\n"
                      + _safe("공동지분율", lambda: compare.joint_share_check(rec)))
 
     if facts is not None:
@@ -817,8 +846,10 @@ def build_messages(
             "표에 적힌 사실을 위 [판정 지침]의 법적 요건에 **대입**해서만 판단하라.\n"
             "사실이 요건에 닿지 않으면 위반이 아니다.")
     else:
-        parts.append(f"\n[공고 문서]\n{doc}")
-    if select:
+        parts.append(f"\n[{L('공고 문서')}]\n{doc}")
+    if select and en:
+        parts.append(_en.TAIL_SELECT.format(key=SELECT_KEY))
+    elif select:
         # 선택형 — '위반 없음'이 24번의 부정이 아니라 한 번의 빈 배열이 된다.
         parts.append(
             f"\n위 항목 중 **위반에 해당하는 것만** 골라 `{SELECT_KEY}` 배열에 담아라.\n"
@@ -827,6 +858,9 @@ def build_messages(
             "공공 입찰공고는 담당자가 법령을 참고해 작성하므로 위반이 없는 공고가 많다.\n"
             "고르지 않은 항목은 '위반이 아니다'로 처리되니, 확실한 것만 고르면 된다."
         )
+    elif graded and dual and any(i in DUAL_ITEMS for i in items) and en:
+        parts.append(_en.tail_dual([i for i in items if i in DUAL_ITEMS],
+                                   GRADE_KEY, LAWFUL_KEY))
     elif graded and dual and any(i in DUAL_ITEMS for i in items):
         _d = [i for i in items if i in DUAL_ITEMS]
         parts.append(
@@ -844,14 +878,20 @@ def build_messages(
     #    모순 상태가 된다. dev200t 1차 실행이 그 상태로 800회 돌았고,
     #    비대상 항목 8개가 흔들렸다(v2 +0.133 · v11 −0.124 · v1 +0.127 · v4 −0.089).
     #    선택적 dual 은 위 분기 하나로 끝이고, 나머지는 아래 일반 지시문을 받는다.
+    elif graded and en:
+        parts.append(_en.TAIL_GRADED)
     elif graded:
         parts.append(
             f"\n위 항목 각각에 대해 {GRADE_KEY}(0~3)와 근거문구를 JSON으로 내라.")
+    elif en:
+        parts.append(_en.TAIL_BINARY)
     else:
         parts.append(
             "\n위 항목 각각에 대해 위반여부(0 또는 1)와 근거문구를 JSON으로 내라.")
 
+    sysmsg = ((_en.SYSTEM + (_en.GRADE_GUIDE if graded else "")) if en
+              else (SYSTEM + (GRADE_GUIDE if graded else "")))
     return [
-        {"role": "system", "content": SYSTEM + (GRADE_GUIDE if graded else "")},
+        {"role": "system", "content": sysmsg},
         {"role": "user", "content": "\n".join(parts)},
     ]

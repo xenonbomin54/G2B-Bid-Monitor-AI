@@ -307,6 +307,7 @@ class Pipeline:
         select: bool = False,
         dual: bool = False,
         extract: bool = False,
+        lang: str = "ko",
     ):
         self.runner = runner
         self.tbl = item_table
@@ -335,6 +336,9 @@ class Pipeline:
         # dev200 FP 105건 중 59건(56%)이 '문구는 정확히 찾았으나 적용 판단 실패'였고,
         # 원문을 직접 보며 판정하는 구조가 그 경로를 열어 준다는 것이 분석의 결론이다.
         self.extract = extract
+        # lang="en": 지시문만 영어로 바꾼 A/B 실험판(§prompts_en).
+        # 공고 원문·사실 블록·스키마 키·등급 체계는 한국어판과 동일하다.
+        self.lang = lang
         self.facts: Dict[str, Any] = {}
         # dual: 등급 앞에 `적법근거` 를 두어 반증을 먼저 탐색시킨다.
         self.dual = dual
@@ -419,6 +423,7 @@ class Pipeline:
                 select=self.select,
                 dual=self.dual,
                 facts=self.facts.get(task.rec.id) if self.extract else None,
+                lang=self.lang,
             )
             n = self.runner.count_tokens(msgs)
             if n <= self.prompt_budget - self.max_tokens or budget <= 1200:

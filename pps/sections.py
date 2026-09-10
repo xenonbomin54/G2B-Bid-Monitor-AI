@@ -214,7 +214,7 @@ def select(
     return _emit(secs, picked, budget)
 
 
-def full_context(rec: Record, budget: int) -> str:
+def full_context(rec: Record, budget: int, lang: str = "ko") -> str:
     """부재탐지 항목용 — 전체 문서를 예산 안에서 최대한 담는다.
 
     잘렸으면 그 사실을 명시한다. '안 보이는 것'과 '없는 것'을 모델이 혼동하면
@@ -242,14 +242,25 @@ def full_context(rec: Record, budget: int) -> str:
         used += len(head) + len(body)
 
     text = "\n\n".join(chunks)
+    # 이 안내문도 **지시문**이다 — 영어 지시문판(§prompts_en) A/B 에서 같이 영어로 낸다.
+    # 문서 유형명("공고문"·"과업지시서")은 데이터이므로 두 언어판 모두 한국어를 유지한다.
+    en = (lang == "en")
     notes = []
     if truncated:
-        notes.append("길이 예산으로 뒷부분이 잘린 문서: " + ", ".join(sorted(set(truncated))))
+        notes.append(("Truncated at the end due to the length budget: " if en
+                      else "길이 예산으로 뒷부분이 잘린 문서: ")
+                     + ", ".join(sorted(set(truncated))))
     if dropped:
-        notes.append("길이 예산으로 제외된 문서: " + ", ".join(sorted(set(dropped))))
+        notes.append(("Excluded due to the length budget: " if en
+                      else "길이 예산으로 제외된 문서: ")
+                     + ", ".join(sorted(set(dropped))))
     for t, n in (rec.dropped_doc_counts or {}).items():
-        notes.append(f"애초에 제공되지 않은 문서: {t} {n}건")
+        notes.append(f"Not provided at all: {t} ({n})" if en
+                     else f"애초에 제공되지 않은 문서: {t} {n}건")
     if notes:
-        text += ("\n\n[주의] " + " / ".join(notes)
-                 + "\n위 문서에 대해서는 '기재가 없다'고 단정하지 말 것.")
+        text += (("\n\n[NOTE] " + " / ".join(notes)
+                  + "\nDo not conclude that a statement is 'missing' for these documents.")
+                 if en else
+                 ("\n\n[주의] " + " / ".join(notes)
+                  + "\n위 문서에 대해서는 '기재가 없다'고 단정하지 말 것."))
     return text

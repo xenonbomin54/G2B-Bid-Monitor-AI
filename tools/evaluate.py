@@ -48,6 +48,9 @@ def main() -> int:
     ap.add_argument("--select", action="store_true",
                     help="선택형 출력 — 위반 항목만 배열로 받는다(§prompts 선택형 출력). "
                          "과예측 1.62배를 줄이는 것이 목적이다.")
+    ap.add_argument("--lang", default="ko", choices=["ko", "en"],
+                    help="지시문 언어. en 이면 프롬프트의 지시문·섹션 라벨만 영어로 바꾼다"
+                         "(공고 원문·사실블록·스키마 키·등급 체계는 동일). A/B 실험용.")
     ap.add_argument("--extract", action="store_true",
                     help="사실 추출 2단계 구조(Architecture A) — 공고당 1회 사실을 뽑고 "
                          "판정에는 원문 대신 사실표를 준다. 호출 4회 → 5회.")
@@ -70,6 +73,7 @@ def main() -> int:
 
     print(f"레코드 {len(recs)}건 · 러너 {args.runner}"
           f"{' · 규칙결합 OFF' if args.no_rules else ''}"
+          f"{' · 지시문=' + args.lang if args.lang != 'ko' else ''}"
           f"{' · 사실추출2단계' if args.extract else ''}"
           f"{' · 선택형' if args.select else ''}"
           f"{' · 양면판단' if args.dual else ''}"
@@ -79,7 +83,8 @@ def main() -> int:
     runner = make_runner(args.runner, items=ITEMS)
     pipe = Pipeline(runner, tbl, gosi=gosi, use_rules=not args.no_rules,
                     graded=args.graded, grade_threshold=args.grade_threshold,
-                    select=args.select, dual=args.dual, extract=args.extract)
+                    select=args.select, dual=args.dual, extract=args.extract,
+                    lang=args.lang)
 
     judged = pipe.run(recs, chunk=args.chunk)
 

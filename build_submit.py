@@ -36,7 +36,10 @@ PKG = os.path.join(ROOT, "pps")
 # 의존 순서 (앞이 먼저 로드된다)
 MODULES = [
     "law", "records", "evidence", "presence", "pumnum", "gosimatch", "compare", "spec", "schedule",
-    "sections", "gating", "prompts", "grades", "runner", "pipeline", "submission",
+    # prompts_en 은 prompts 가 import 하므로 **prompts 보다 앞**이어야 한다.
+    # 빠뜨리면 제출 코드가 ImportError 로 죽고 전 항목 0 이 제출된다.
+    "sections", "gating", "prompts_en", "prompts", "grades", "runner", "pipeline",
+    "submission",
 ]
 
 DEV_BLOCK = re.compile(
