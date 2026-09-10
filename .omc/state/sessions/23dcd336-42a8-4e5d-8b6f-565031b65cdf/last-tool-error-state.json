@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"cd /Users/xenonbomin54/나라장터; sleep 90; grep -E \\\"레코드 |호출|결손|등급분포|Macro F1\\\" out/dual8.log; pgrep -f \\\"evaluate.py\\\" >/dev/null && echo \\\"실행중\\\"\",\"description\":\"Check dual smoke result\"}",
-  "error": "Exit code 1\n레코드 8건 · 러너 api · 양면판단 · 등급모드(0~3) · 문턱 2\n  원본 등급 저장 out/g_smoke_dual.json · 등급분포 {0: 129, 2: 2, 3: 10}\n레코드 8 · LLM 호출 32 (공고당 4.00회)\n빈 출력 0 · 결손 항목 0\nMacro F1 = 1.0000   (정의된 항목 7/24)",
-  "timestamp": "2026-09-09T11:36:46.118Z",
+  "tool_input_preview": "{\"command\":\"cd /Users/xenonbomin54/나라장터\\npython3 - <<'PY'\\nimport sys,csv; sys.path.insert(0,'.')\\nfrom collections import Counter\\nfrom pps.records import ITEMS, load_records\\nfrom pps import pumnum\\...",
+  "error": "Exit code 1\n메타 세부품명번호 보유 78/200 · 본문에서 추출 84/200\nTraceback (most recent call last):\n  File \"<stdin>\", line 11, in <module>\nAttributeError: 'Gosi' object has no attribute 'items'",
+  "timestamp": "2026-09-09T22:14:25.587Z",
   "retry_count": 1
 }

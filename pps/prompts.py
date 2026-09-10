@@ -297,6 +297,209 @@ SELECT_KEY = "위반항목"
 # 축약판 40건 측정으로 검증한다.
 LAWFUL_KEY = "적법근거"
 
+# 양면 판단을 **어느 항목에** 쓸 것인가 — dev200 오프라인 분해(문턱 3, g_n vs g_r)
+#   유리: v2 +0.068 · v13 +0.075 · v14 +0.046 · v16 +0.042 · v17 +0.179 · v18 +0.079 · v20 +0.103
+#   불리: v3 −0.059 · v7 −0.164 · v9 −0.113 · v10 −0.046 · v11 −0.179 · v15 −0.123 · v19 −0.044 · v24 −0.058
+# 방향을 가르는 축이 있다.
+#   · '걸린 제한이 허용 범위 안인가'를 묻는 항목에서는 적법근거를 먼저 찾는 것이 과잉 판정을 막는다.
+#   · 반면 '요건이 없는가'(v10·v11 부재탐지) · 값 대조(v24) · 규격(v9) · 범위 계산(v3·v7)에서는
+#     적법근거를 찾아낸 순간 '요건이 있다'고 착각해 진짜양성을 깎는다(v11 TP 6→4 · v15 6→4 · v7 7→5).
+# 그래서 **기업규모 제한의 허용 범위를 묻는 항목군**에만 쓴다. 이 6개는 항목표에서
+# 같은 조문(판로지원법 시행령 제2조의2 제1항·제2조의3 + 국가령 제21조 / 지방령 제20조)을 공유한다.
+# dev 점수로 고른 부분집합이 아니라 조문으로 정의된 집합이라는 점이 중요하다.
+DUAL_ITEMS = frozenset({"v13", "v14", "v15", "v16", "v17", "v18"})
+
+# --------------------------------------------------------------------------- 사실 추출 (Architecture A)
+#
+# 왜 만들었나 — dev200 FP 105건 전수 분석의 결론
+#   · 기업규모 4항목(v13 v14 v15 v17)의 FP 24건과 TP 22건이 **100% 같은 문구**를
+#     근거로 든다("「중소기업기본법」제2조에 따른 … 확인서를 소지한 자").
+#     즉 **문구 탐지는 완벽하고, 그 문구가 이 공고에서 위반인지의 판단이 틀린다.**
+#   · 부재탐지 5항목의 FP 35건도 마찬가지다. FP 와 TP 모두 해당 문구가 원문에 없다.
+#     차이는 '그 요건이 이 공고에 필요한가'뿐이다.
+#   · 즉 FP 105건 중 59건(56%)이 **적용범위 판단 실패**다. 문구를 더 잘 찾게 해도 안 준다.
+#
+# 그래서 판정을 두 단계로 쪼갠다.
+#   1단계 이 모듈 — 원문에서 **사실만** 뽑는다. 위반 여부는 묻지 않는다.
+#   2단계         — 뽑은 사실표만 보고 법적 요건과 대조한다. 원문은 주지 않는다.
+# 원문을 직접 보며 판정하면 '문구가 보이니 위반' 경로가 열린다. 그 경로를 끊는 것이 목적이다.
+
+EXTRACT_KEYS = ("참가자격제한", "규격지정", "법정예외", "일정", "공동수급")
+
+_제한종류 = ["지역", "실적", "기업규모", "직접생산확인", "소프트웨어사업자",
+          "특정기관·특정실적", "인증·면허·등록", "기타"]
+
+
+def build_extract_schema() -> Dict[str, Any]:
+    """1단계 사실 추출 스키마. **판정 필드가 하나도 없다** — 의도한 것이다."""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": list(EXTRACT_KEYS),
+        "properties": {
+            "참가자격제한": {
+                "type": "array", "maxItems": 12,
+                "items": {
+                    "type": "object", "additionalProperties": False,
+                    "required": ["종류", "내용", "원문"],
+                    "properties": {
+                        "종류": {"type": "string", "enum": _제한종류},
+                        # 기업규모는 '중소기업/소기업/소상공인' 중 무엇을 요구했는지가
+                        # v13~v18 을 가르는 유일한 축이다. 반드시 그대로 적게 한다.
+                        "내용": {"type": "string", "maxLength": 150},
+                        "원문": {"type": "string", "maxLength": 300},
+                    },
+                },
+            },
+            "규격지정": {
+                "type": "array", "maxItems": 8,
+                "items": {
+                    "type": "object", "additionalProperties": False,
+                    "required": ["모델명또는규격", "대체허용문구", "원문"],
+                    "properties": {
+                        "모델명또는규격": {"type": "string", "maxLength": 100},
+                        "대체허용문구": {"type": ["string", "null"], "maxLength": 200},
+                        "원문": {"type": "string", "maxLength": 300},
+                    },
+                },
+            },
+            # 판로지원법 시행령 제2조의3 같은 **법정 예외**를 공고가 명시했는지.
+            # v17·v18 항목표 비고가 "판로지원 예외 명시한 경우, 제한 없어도 가능"이라고 적고 있다.
+            "법정예외": {
+                "type": "array", "maxItems": 6,
+                "items": {
+                    "type": "object", "additionalProperties": False,
+                    "required": ["조항", "원문"],
+                    "properties": {
+                        "조항": {"type": "string", "maxLength": 80},
+                        "원문": {"type": "string", "maxLength": 300},
+                    },
+                },
+            },
+            "일정": {
+                "type": "object", "additionalProperties": False,
+                "required": ["현장설명회", "입찰마감", "공고일"],
+                "properties": {
+                    "현장설명회": {"type": ["string", "null"], "maxLength": 80},
+                    "입찰마감": {"type": ["string", "null"], "maxLength": 80},
+                    "공고일": {"type": ["string", "null"], "maxLength": 80},
+                },
+            },
+            "공동수급": {
+                "type": "object", "additionalProperties": False,
+                "required": ["허용여부", "최소지분율", "원문"],
+                "properties": {
+                    "허용여부": {"type": ["string", "null"], "maxLength": 40},
+                    "최소지분율": {"type": ["string", "null"], "maxLength": 40},
+                    "원문": {"type": ["string", "null"], "maxLength": 300},
+                },
+            },
+        },
+    }
+
+
+EXTRACT_SYSTEM = (
+    "너는 공공 입찰공고에서 **사실만** 뽑아내는 도구다.\n"
+    "위반 여부를 판단하지 마라. 좋다·나쁘다·적법하다·위법하다를 말하지 마라.\n"
+    "공고문에 **쓰여 있는 것만** 적는다. 쓰여 있지 않으면 빈 배열이나 null 을 낸다.\n"
+    "추측해서 채우지 마라 — 빈 값이 틀린 값보다 낫다.\n"
+    "원문은 **글자 그대로** 옮긴다. 요약하거나 고쳐 쓰지 마라."
+)
+
+
+def build_extract_messages(rec: Record, budget: Optional[int] = None) -> List[Dict[str, str]]:
+    """1단계 — 공고 1건에서 사실을 뽑는 메시지."""
+    body = rec.full_text if budget is None else rec.full_text[:budget]
+    parts = [
+        "다음은 공공 입찰공고 문서다. 여기서 아래 다섯 가지 사실을 뽑아라.",
+        "",
+        "1. **참가자격제한** — 입찰에 참가하려는 자를 구속하는 요건을 전부 뽑는다.",
+        "   · 어느 절에 적혀 있는지는 따지지 마라. 참가자격·제출서류·낙찰자결정·",
+        "     과업지시서 어디에 있든, **참가하려는 자를 구속하면** 참가자격제한이다.",
+        "   · 기업규모는 '중소기업' / '소기업' / '소상공인' 중 **공고가 쓴 말 그대로** 적는다.",
+        "     둘을 함께 적었으면(예: 중소기업 또는 소상공인) 그것도 그대로 적는다.",
+        "   · 단순 제출서류 목록이나 평가 배점표는 참가자격제한이 **아니다**.",
+        "     '~한 자이어야 한다' 처럼 자격을 거는 문장만 뽑는다.",
+        "2. **규격지정** — 특정 모델명·제조사·규격을 지정한 곳과, 그 옆에 '동등 이상'",
+        "   '이와 동등한' 같은 대체 허용 문구가 있는지.",
+        "3. **법정예외** — 공고가 스스로 인용한 법령상 예외 조항(예: 판로지원법 시행령",
+        "   제2조의3). 조항 번호만 스치듯 인용한 것은 넣지 마라 — 예외를 **적용한다**는",
+        "   뜻이 문장에 드러난 것만 넣는다.",
+        "4. **일정** — 현장설명회(사업설명회) 일시, 입찰마감 일시, 공고일.",
+        "5. **공동수급** — 공동수급체 허용 여부와 구성원 최소 지분율.",
+        "",
+        "--- 공고 문서 ---",
+        body,
+    ]
+    return [{"role": "system", "content": EXTRACT_SYSTEM},
+            {"role": "user", "content": "\n".join(parts)}]
+
+
+def render_facts(obj: Optional[Dict[str, Any]]) -> str:
+    """추출 결과 → 2단계 프롬프트에 넣을 사실표.
+
+    비어 있는 항목도 **'없음'이라고 명시**한다. 빈 칸으로 두면 모델이
+    '문서를 못 봤다'고 여겨 판단을 보류하거나 원문을 추측한다.
+    """
+    if not isinstance(obj, dict):
+        return "[사실 추출 실패 — 이 공고는 사실표 없이 판단한다]"
+    out: List[str] = ["■ 공고에서 뽑은 사실 (아래가 이 공고에 대해 확인된 전부다)"]
+
+    lim = obj.get("참가자격제한")
+    out.append("\n[참가자격에 건 제한]")
+    if isinstance(lim, list) and lim:
+        for e in lim:
+            if not isinstance(e, dict):
+                continue
+            out.append(f"  · {e.get('종류','?')}: {e.get('내용','')}")
+            src = (e.get("원문") or "").strip()
+            if src:
+                out.append(f"      원문: {src}")
+    else:
+        out.append("  · 없음 — 참가자격을 제한하는 문구가 공고에 없다")
+
+    spec = obj.get("규격지정")
+    out.append("\n[규격·모델명 지정]")
+    if isinstance(spec, list) and spec:
+        for e in spec:
+            if not isinstance(e, dict):
+                continue
+            alt = e.get("대체허용문구")
+            out.append(f"  · {e.get('모델명또는규격','')} · 대체허용문구 "
+                       f"{'있음: ' + str(alt) if alt else '**없음**'}")
+            src = (e.get("원문") or "").strip()
+            if src:
+                out.append(f"      원문: {src}")
+    else:
+        out.append("  · 없음 — 특정 모델명·규격을 지정한 곳이 없다")
+
+    exc = obj.get("법정예외")
+    out.append("\n[공고가 명시한 법정 예외]")
+    if isinstance(exc, list) and exc:
+        for e in exc:
+            if isinstance(e, dict):
+                out.append(f"  · {e.get('조항','')}: {(e.get('원문') or '')[:200]}")
+    else:
+        out.append("  · 없음")
+
+    sch = obj.get("일정")
+    if isinstance(sch, dict):
+        out.append("\n[일정]")
+        for k in ("공고일", "현장설명회", "입찰마감"):
+            v = sch.get(k)
+            out.append(f"  · {k}: {v if v else '기재 없음'}")
+
+    jv = obj.get("공동수급")
+    if isinstance(jv, dict):
+        out.append("\n[공동수급]")
+        out.append(f"  · 허용여부: {jv.get('허용여부') or '기재 없음'}"
+                   f" · 최소지분율: {jv.get('최소지분율') or '기재 없음'}")
+        src = (jv.get("원문") or "").strip()
+        if src:
+            out.append(f"      원문: {src}")
+    return "\n".join(out)
+
+
 
 def build_select_schema(items: Sequence[str]) -> Dict[str, Any]:
     """선택형 스키마 — 위반인 항목만 배열로 받는다. 빈 배열이 '위반 없음'이다."""
@@ -339,7 +542,7 @@ def build_schema(items: Sequence[str], graded: bool = False,
     for v in items:
         ev = ({"type": "null"} if v in ABSENCE
               else {"type": ["string", "null"], "maxLength": 600})
-        if dual:
+        if dual and v in DUAL_ITEMS:
             # 순서가 곧 생성 순서다: 적법근거 → 등급 → 근거문구.
             props[v] = {
                 "type": "object",
@@ -562,14 +765,20 @@ def build_messages(
     graded: bool = False,
     select: bool = False,
     dual: bool = False,
+    facts: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, str]]:
     """한 그룹에 대한 대화 메시지.
 
     graded=True 면 위반여부(0/1) 대신 위반등급(0~3)을 요구한다 — §위반등급 참조.
+    facts 가 오면 **원문 대신 1단계 사실표**를 넣는다(§사실 추출, Architecture A).
+    원문을 직접 보며 판정하면 '문구가 보이니 위반' 경로가 열리는데, dev200 FP 105건
+    분석에서 그 경로가 FP 의 56%를 만든다는 것이 확인됐다. 여기서 그 경로를 끊는다.
     """
     b = budget if budget is not None else group.budget
 
-    if group.full_doc:
+    if facts is not None:
+        doc = render_facts(facts)
+    elif group.full_doc:
         doc = sections.full_context(rec, b)
     else:
         doc = sections.select(rec, sections.CUES[group.cue], b)
@@ -598,7 +807,15 @@ def build_messages(
         parts.append("\n[공동수급 최소지분율 (v21, 계산됨)]\n"
                      + _safe("공동지분율", lambda: compare.joint_share_check(rec)))
 
-    parts.append(f"\n[공고 문서]\n{doc}")
+    if facts is not None:
+        parts.append(f"\n{doc}\n")
+        parts.append(
+            "위 사실표가 이 공고에 대해 **확인된 전부**다. 원문은 주지 않는다.\n"
+            "표에 '없음'이라고 적힌 것은 실제로 공고에 없는 것이다 — 있을 것이라고 짐작하지 마라.\n"
+            "표에 적힌 사실을 위 [판정 지침]의 법적 요건에 **대입**해서만 판단하라.\n"
+            "사실이 요건에 닿지 않으면 위반이 아니다.")
+    else:
+        parts.append(f"\n[공고 문서]\n{doc}")
     if select:
         # 선택형 — '위반 없음'이 24번의 부정이 아니라 한 번의 빈 배열이 된다.
         parts.append(
@@ -608,20 +825,23 @@ def build_messages(
             "공공 입찰공고는 담당자가 법령을 참고해 작성하므로 위반이 없는 공고가 많다.\n"
             "고르지 않은 항목은 '위반이 아니다'로 처리되니, 확실한 것만 고르면 된다."
         )
-    elif graded and dual:
-        # 양면 판단 — 등급을 정하기 전에 반증을 한 번 적게 한다.
-        # 위반만 찾으라고 하면 '찾아야 한다'는 압력이 생기고, 그 압력이
-        # 완전 적법한 공고에서도 공고당 0.6건의 오탐을 만들어 왔다.
+    elif graded and dual and any(i in DUAL_ITEMS for i in items):
+        _d = [i for i in items if i in DUAL_ITEMS]
         parts.append(
-            f"\n위 항목 각각에 대해 **다음 순서로** 답하라.\n"
-            f"1. `{LAWFUL_KEY}` — 이 공고가 이 항목에 관해 **법령을 지켰다고 볼 근거**를 "
-            f"먼저 찾는다. 적법하게 기재된 문구를 원문 그대로 인용하거나, 이 항목이 "
-            f"이 공고에 적용되지 않는 이유를 적는다. **80자 안으로 짧게** 쓴다.\n"
+            f"\n위 항목 각각에 대해 {GRADE_KEY}(0~3)와 근거문구를 JSON으로 내라.\n"
+            f"단 **{', '.join(_d)} 에 대해서만** 등급을 정하기 **전에** "
+            f"`{LAWFUL_KEY}` 를 먼저 적어라 — 이 공고가 그 항목에 관해 "
+            f"**법령이 허용하는 범위 안에 있다고 볼 근거**를 찾아 원문 그대로 인용하거나, "
+            f"그 항목이 이 공고에 적용되지 않는 이유를 **80자 안으로 짧게** 쓴다. "
             f"찾지 못했을 때만 null 을 쓴다.\n"
-            f"2. `{GRADE_KEY}` (0~3) — 1번을 쓴 뒤에 정한다. "
-            f"적법근거가 뚜렷하면 0 또는 1이다.\n"
-            f"3. `근거문구` — 위반 등급이 2 이상일 때 그 근거를 원문 그대로 인용한다.\n"
-            f"공공 입찰공고는 담당자가 법령을 참고해 작성하므로 적법한 항목이 대부분이다.")
+            f"기업규모 제한은 금액 구간마다 허용 범위가 다르다 — 공고가 요구한 범위가 "
+            f"그 구간에서 허용되는 범위와 같으면 위반이 아니다. 그것을 먼저 확인하라는 뜻이다.")
+    # ⚠️ 여기에 '전체 dual' 분기를 두면 안 된다.
+    #    DUAL_ITEMS 와 교집합이 없는 그룹(G1·G3·G4)이 그 분기로 떨어져
+    #    **스키마에는 `적법근거` 필드가 없는데 지시문은 그것을 먼저 쓰라고 하는**
+    #    모순 상태가 된다. dev200t 1차 실행이 그 상태로 800회 돌았고,
+    #    비대상 항목 8개가 흔들렸다(v2 +0.133 · v11 −0.124 · v1 +0.127 · v4 −0.089).
+    #    선택적 dual 은 위 분기 하나로 끝이고, 나머지는 아래 일반 지시문을 받는다.
     elif graded:
         parts.append(
             f"\n위 항목 각각에 대해 {GRADE_KEY}(0~3)와 근거문구를 JSON으로 내라.")

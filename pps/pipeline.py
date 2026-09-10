@@ -239,6 +239,8 @@ class Stats:
     n_evidence_kept: int = 0
     n_evidence_dropped: int = 0
     n_evidence_repaired: int = 0
+    # Architecture A — 1단계 사실추출에 성공한 공고 수
+    n_extracted: int = 0
     gated_cells: int = 0
     seconds: float = 0.0
     # 규칙 2-1) 공고당 고정 LLM 정상 호출 1회 이상. 0이 아니면 제출물이 무효 처리된다.
@@ -304,6 +306,7 @@ class Pipeline:
         grade_threshold: int = GRADE_THRESHOLD_DEFAULT,
         select: bool = False,
         dual: bool = False,
+        extract: bool = False,
     ):
         self.runner = runner
         self.tbl = item_table
@@ -327,6 +330,12 @@ class Pipeline:
         #   dev200n 실측 — 예측 248 vs 정답 153(1.62배 과예측), 정답0 공고 112건에서 FP 62건.
         #   F1 = 2TP/(예측+정답) 이므로 과예측을 줄이는 것이 가장 큰 레버다.
         self.select = select
+        # extract: 판정 전에 공고당 1회 **사실 추출**을 돌리고, 판정 단계에는
+        # 원문 대신 그 사실표를 준다(§prompts 사실 추출, Architecture A).
+        # dev200 FP 105건 중 59건(56%)이 '문구는 정확히 찾았으나 적용 판단 실패'였고,
+        # 원문을 직접 보며 판정하는 구조가 그 경로를 열어 준다는 것이 분석의 결론이다.
+        self.extract = extract
+        self.facts: Dict[str, Any] = {}
         # dual: 등급 앞에 `적법근거` 를 두어 반증을 먼저 탐색시킨다.
         self.dual = dual
         # time.monotonic() 기준 마감 시각. 넘기면 남은 호출을 포기하고 0으로 낸다.
@@ -359,6 +368,45 @@ class Pipeline:
         self.stats.n_records = len(recs)
         return tasks
 
+    def _extract(self, recs: Sequence[Record], chunk: int = 64,
+                 progress: bool = True) -> Dict[str, Any]:
+        """1단계 — 공고당 1회, 원문에서 사실만 뽑는다.
+
+        실패하면 그 공고만 facts 가 없어 원문 판정으로 되돌아간다(§render).
+        전체가 무너지지 않게 하는 것이 중요하다 — 추출은 보조 단계이지 관문이 아니다.
+        """
+        t0 = time.time()
+        schema = prompts.build_extract_schema()
+        msgs = []
+        for r in recs:
+            b = self.prompt_budget - self.max_tokens
+            m = prompts.build_extract_messages(r, budget=None)
+            if self.runner.count_tokens(m) > b:
+                # 길면 본문을 줄여 다시 만든다 — 자르는 지점은 문서 앞쪽을 살린다.
+                m = prompts.build_extract_messages(r, budget=max(4000, b * 2))
+            msgs.append(m)
+        cfg = GenConfig(max_tokens=1600, seed=self.seed, schema=schema)
+        outs: List[str] = [""] * len(msgs)
+        for s in range(0, len(msgs), chunk):
+            part = list(range(s, min(s + chunk, len(msgs))))
+            res = run_with_fallback(self.runner, [msgs[i] for i in part], cfg)
+            for i, text in zip(part, res):
+                outs[i] = text
+            if progress:
+                print(f"  [사실추출] {min(s + chunk, len(msgs))}/{len(msgs)} … "
+                      f"{time.time() - t0:.0f}s")
+        facts: Dict[str, Any] = {}
+        ok = 0
+        for r, text in zip(recs, outs):
+            obj = extract_json(text)
+            if isinstance(obj, dict) and any(k in obj for k in prompts.EXTRACT_KEYS):
+                facts[r.id] = obj
+                ok += 1
+        if progress:
+            print(f"  [사실추출] 성공 {ok}/{len(recs)}건 · {time.time() - t0:.0f}s")
+        self.stats.n_extracted = ok
+        return facts
+
     def render(self, task: Task) -> Task:
         budget = task.group.budget
         while True:
@@ -370,6 +418,7 @@ class Pipeline:
                 graded=self.graded,
                 select=self.select,
                 dual=self.dual,
+                facts=self.facts.get(task.rec.id) if self.extract else None,
             )
             n = self.runner.count_tokens(msgs)
             if n <= self.prompt_budget - self.max_tokens or budget <= 1200:
@@ -381,6 +430,8 @@ class Pipeline:
     def run(self, recs: Sequence[Record], chunk: int = 64,
             progress: bool = True) -> Dict[str, Dict[str, Dict[str, Any]]]:
         t0 = time.time()
+        if self.extract:
+            self.facts = self._extract(recs, chunk=chunk, progress=progress)
         tasks = [self.render(t) for t in self.plan(recs)]
         if progress:
             toks = sorted(t.ntok for t in tasks) or [0]

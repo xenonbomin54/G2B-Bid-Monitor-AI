@@ -72,17 +72,35 @@ def amount_check(rec: Record, head_chars: int = 6000) -> Tuple[str, bool]:
     """
     amts = amounts_in(rec.notice_text[:head_chars])
     budget, est = rec.배정예산, rec.추정가격
+
+    # 등록 금액이 1,000원 미만이면 **데이터 이상**이지 '공고서와 상이'가 아니다.
+    # dev200 에 배정예산이 1원·2원·6원인 공고가 있고, 그때 이 블록이 "본문에 동일 금액
+    # 없음"이라고 알려 주면 모델이 그대로 v24 를 찍는다(FP 3건). 대조 자체를 접는다.
+    _이상 = (0 < budget < 1000) or (0 < est < 1000)
+    if _이상:
+        return ("등록 금액이 1,000원 미만이다 — 나라장터 입력값이 비어 있거나 "
+                "비식별 처리된 것으로 보인다. 이 값으로는 본문과 대조할 수 없다.", True)
+
     found_b = any(_close(a, budget) for a in amts)
     found_e = any(_close(a, est) or _close(a, round(est * 1.1)) for a in amts)
     parts = []
+    # ⚠️ '없음'은 결론이다. 여기서 하는 일은 **앞 6,000자 안에서 같은 숫자를 찾는 것**뿐이고,
+    #    금액은 첨부나 뒤쪽에 있을 수 있다. 찾지 못한 것을 '없다'고 적으면 모델이
+    #    그 한 줄을 위반 근거로 삼는다(dev200 v24 FP 5건, 같은 문구를 쓴 TP 는 0건).
+    #    사실만 적고 결론 어휘를 쓰지 않는다 — STATUS.md §사실 ≠ 판단.
     if budget:
-        parts.append(f"배정예산 {budget:,}원 → 본문에 {'있음(일치)' if found_b else '동일 금액 없음'}")
+        parts.append(f"배정예산 {budget:,}원 → 본문 앞부분에서 "
+                     f"{'같은 금액을 찾음' if found_b else '같은 금액을 찾지 못함'}")
     if est:
-        parts.append(f"추정가격 {est:,}원 → 본문에 {'있음(일치)' if found_e else '동일 금액 없음'}")
+        parts.append(f"추정가격 {est:,}원 → 본문 앞부분에서 "
+                     f"{'같은 금액을 찾음' if found_e else '같은 금액을 찾지 못함'}")
     if amts:
         top = sorted(set(amts), reverse=True)[:5]
-        parts.append("본문 주요 금액: " + ", ".join(f"{a:,}원" for a in top))
-    return " / ".join(parts) or "본문에 금액 표기 없음", (found_b or found_e)
+        parts.append("본문 앞부분의 금액: " + ", ".join(f"{a:,}원" for a in top))
+    if not (found_b or found_e):
+        parts.append("※ 찾지 못한 것은 **검색 범위 밖에 있었을 수 있다**(첨부·본문 뒤쪽은 "
+                     "이 검색에 들어가지 않는다). 이 줄만으로 '공고서와 다르다'고 판단하지 마라.")
+    return " / ".join(parts) or "본문 앞부분에 금액 표기 없음", (found_b or found_e)
 
 
 def amount_is_matching_quote(rec: Record, quote: Optional[str]) -> bool:
