@@ -112,6 +112,13 @@
       ]
     }
   },
-  "hotPaths": [],
+  "hotPaths": [
+    {
+      "path": "pps/prompts_en.py",
+      "accessCount": 1,
+      "lastAccessed": 1789041448553,
+      "type": "file"
+    }
+  ],
   "userDirectives": []
 }

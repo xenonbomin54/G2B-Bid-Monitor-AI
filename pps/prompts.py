@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
 from . import compare, gosimatch, law, presence, pumnum, schedule, sections, spec
+from . import prompts_en as _en
 from .records import ABSENCE, Record
 
 
@@ -766,6 +767,7 @@ def build_messages(
     select: bool = False,
     dual: bool = False,
     facts: Optional[Dict[str, Any]] = None,
+    lang: str = "ko",
 ) -> List[Dict[str, str]]:
     """한 그룹에 대한 대화 메시지.
 
