@@ -1,7 +1,7 @@
 {
   "tool_name": "Bash",
-  "tool_input_preview": "{\"command\":\"cd /Users/xenonbomin54/나라장터\\npython3 - <<'PY'\\nimport sys,csv; sys.path.insert(0,'.')\\nfrom collections import Counter\\nfrom pps.records import ITEMS, load_records\\nfrom pps import pumnum\\...",
-  "error": "Exit code 1\n메타 세부품명번호 보유 78/200 · 본문에서 추출 84/200\nTraceback (most recent call last):\n  File \"<stdin>\", line 11, in <module>\nAttributeError: 'Gosi' object has no attribute 'items'",
-  "timestamp": "2026-09-09T22:14:25.587Z",
+  "tool_input_preview": "{\"command\":\"cd /Users/xenonbomin54/나라장터\\npython3 -c \\\"\\nimport json\\nd=json.load(open('open/data/항목표.json',encoding='utf-8'))\\nprint('최상위 키:', list(d))\\nfor k in d:\\n    v=d[k]\\n    print(f'  {k}: {ty...",
+  "error": "Exit code 1\n최상위 키: ['기준일', '표기규칙', '부재탐지항목', '항목']\n  기준일: str 10\n  표기규칙: str 69\n  부재탐지항목: list 5\n  항목: dict 24\n=== 항목 정의 본체 ===\nTraceback (most recent call last):\n  File \"<string>\", line 8, in <module>\n    print(json.dumps(body[16],ensure_ascii=False,indent=1))\n                     ~~~~^^^^\nIndexError: list index out of range\n본체 키: ['부재탐지항목', '항목']",
+  "timestamp": "2026-09-10T21:56:44.239Z",
   "retry_count": 1
 }

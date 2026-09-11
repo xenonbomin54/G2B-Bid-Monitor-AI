@@ -788,6 +788,7 @@ def build_messages(
     dual: bool = False,
     facts: Optional[Dict[str, Any]] = None,
     lang: str = "ko",
+    item_ctx: Optional[str] = None,
 ) -> List[Dict[str, str]]:
     """한 그룹에 대한 대화 메시지.
 
@@ -837,6 +838,16 @@ def build_messages(
         # 조문에서 계산되는 값이라 코드가 준다. 판정은 강제하지 않는다.
         parts.append(f"\n[{L('공동수급 최소지분율 (v21, 계산됨)')}]\n"
                      + _safe("공동지분율", lambda: compare.joint_share_check(rec)))
+
+    if item_ctx:
+        # ITEM_CONTEXT_MODE=on — 항목별 법령·증거를 **경계를 세워** 싣는다(§itemctx).
+        # 그룹 전체를 하나로 합치지 않는 것이 핵심이다. 공고 문서는 그대로 남겨
+        # 항목 문맥이 놓친 근거를 모델이 찾을 수 있게 한다(retrieval 은 recall 우선이지
+        # 완전하지 않다).
+        parts.append("\n[항목별 판단 자료]\n"
+                     "아래는 각 항목에 대해 **코드가 따로 찾아 둔** 법령과 증거다.\n"
+                     "한 항목을 판정할 때 다른 항목의 자료를 끌어오지 마라.\n"
+                     + item_ctx)
 
     if facts is not None:
         parts.append(f"\n{doc}\n")

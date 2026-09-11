@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1788952362551,
+  "lastScanned": 1789078650426,
   "projectRoot": "/Users/xenonbomin54/나라장터",
   "techStack": {
     "languages": [],
@@ -33,7 +33,7 @@
       "path": "build",
       "purpose": "Build output",
       "fileCount": 2,
-      "lastAccessed": 1788952362540,
+      "lastAccessed": 1789078650409,
       "keyFiles": [
         "requirements.txt",
         "script.py"
@@ -43,7 +43,7 @@
       "path": "labeling",
       "purpose": null,
       "fileCount": 1,
-      "lastAccessed": 1788952362540,
+      "lastAccessed": 1789078650409,
       "keyFiles": [
         "README.md"
       ]
@@ -52,7 +52,7 @@
       "path": "open",
       "purpose": null,
       "fileCount": 5,
-      "lastAccessed": 1788952362541,
+      "lastAccessed": 1789078650410,
       "keyFiles": [
         "README.md",
         "dev.jsonl.gz",
@@ -64,8 +64,8 @@
     "out": {
       "path": "out",
       "purpose": "Build output",
-      "fileCount": 56,
-      "lastAccessed": 1788952362541,
+      "fileCount": 99,
+      "lastAccessed": 1789078650410,
       "keyFiles": [
         "deadline_test.csv",
         "dev200_eval.log",
@@ -77,8 +77,8 @@
     "pps": {
       "path": "pps",
       "purpose": null,
-      "fileCount": 18,
-      "lastAccessed": 1788952362541,
+      "fileCount": 20,
+      "lastAccessed": 1789078650412,
       "keyFiles": [
         "__init__.py",
         "compare.py",
@@ -91,7 +91,7 @@
       "path": "tools",
       "purpose": null,
       "fileCount": 11,
-      "lastAccessed": 1788952362541,
+      "lastAccessed": 1789078650412,
       "keyFiles": [
         "analyze_errors.py",
         "audit_gates.py",
@@ -104,7 +104,7 @@
       "path": "open/data",
       "purpose": "Data files",
       "fileCount": 3,
-      "lastAccessed": 1788952362542,
+      "lastAccessed": 1789078650413,
       "keyFiles": [
         "test.jsonl.gz",
         "정답스키마_디코딩.json",
@@ -112,13 +112,6 @@
       ]
     }
   },
-  "hotPaths": [
-    {
-      "path": "pps/prompts_en.py",
-      "accessCount": 1,
-      "lastAccessed": 1789041448553,
-      "type": "file"
-    }
-  ],
+  "hotPaths": [],
   "userDirectives": []
 }

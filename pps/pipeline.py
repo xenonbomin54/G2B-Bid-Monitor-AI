@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from . import compare, evidence, gating, presence, prompts, pumnum, schedule
+from . import itemctx
 from .records import ABSENCE, ITEMS, Record
 from .runner import GenConfig, run_with_fallback
 
@@ -308,6 +309,8 @@ class Pipeline:
         dual: bool = False,
         extract: bool = False,
         lang: str = "ko",
+        item_context: bool = False,
+        data_dir: str = "",
     ):
         self.runner = runner
         self.tbl = item_table
@@ -339,6 +342,10 @@ class Pipeline:
         # lang="en": 지시문만 영어로 바꾼 A/B 실험판(§prompts_en).
         # 공고 원문·사실 블록·스키마 키·등급 체계는 한국어판과 동일하다.
         self.lang = lang
+        # ITEM_CONTEXT_MODE — 항목별 법령·증거 문맥을 프롬프트에 싣는다(§itemctx).
+        # off 이면 프롬프트가 baseline 과 **바이트 단위로 같다**(지문 25280eff153e725d).
+        self.item_context = item_context
+        self.data_dir = data_dir
         self.facts: Dict[str, Any] = {}
         # dual: 등급 앞에 `적법근거` 를 두어 반증을 먼저 탐색시킨다.
         self.dual = dual
@@ -347,6 +354,8 @@ class Pipeline:
         # 내더라도 파일을 남기는 쪽이 언제나 낫다.
         self.deadline = deadline
         self.stats = Stats()
+        self._ictx_cache: Dict[Tuple[str, Tuple[str, ...]], str] = {}
+        self._ictx_dump: List[Tuple[str, Any]] = []
 
     def _time_left(self) -> Optional[float]:
         return None if self.deadline is None else self.deadline - time.monotonic()
@@ -411,6 +420,17 @@ class Pipeline:
         self.stats.n_extracted = ok
         return facts
 
+    def _item_ctx(self, task: Task) -> str:
+        """이 작업(그룹)에 실을 항목별 문맥. 캐시해 두 번 만들지 않는다."""
+        key = (task.rec.id, tuple(task.items))
+        hit = self._ictx_cache.get(key)
+        if hit is None:
+            hit, ctxs = itemctx.build_group_context(
+                task.rec, task.items, self.tbl, self.data_dir, gosi=self.gosi)
+            self._ictx_cache[key] = hit
+            self._ictx_dump.append((task.rec.id, ctxs))
+        return hit
+
     def render(self, task: Task) -> Task:
         budget = task.group.budget
         while True:
@@ -424,6 +444,7 @@ class Pipeline:
                 dual=self.dual,
                 facts=self.facts.get(task.rec.id) if self.extract else None,
                 lang=self.lang,
+                item_ctx=self._item_ctx(task) if self.item_context else None,
             )
             n = self.runner.count_tokens(msgs)
             if n <= self.prompt_budget - self.max_tokens or budget <= 1200:
